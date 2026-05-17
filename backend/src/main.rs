@@ -13,6 +13,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env()?;
+
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database_url)
@@ -20,7 +21,13 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let state = AppState { db: pool, config: config.clone() };
+    let redis_client = redis::Client::open(config.redis_url.as_str())
+        .map_err(|e| anyhow::anyhow!("Redis client error: {e}"))?;
+    let redis = redis::aio::ConnectionManager::new(redis_client)
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis connection failed: {e}"))?;
+
+    let state = AppState { db: pool, config: config.clone(), redis };
     let app = create_router(state);
 
     let addr = format!("0.0.0.0:{}", config.port);

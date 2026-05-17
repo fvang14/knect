@@ -2,7 +2,7 @@ mod common;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn register_contractor_returns_tokens(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (status, body) = common::post_json(
         &app,
@@ -23,7 +23,7 @@ async fn register_contractor_returns_tokens(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn register_customer_returns_tokens(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (status, body) = common::post_json(
         &app,
@@ -43,7 +43,7 @@ async fn register_customer_returns_tokens(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn register_duplicate_email_returns_409(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
     let payload = serde_json::json!({
         "email": "dup@example.com",
         "password": "password123",
@@ -60,7 +60,7 @@ async fn register_duplicate_email_returns_409(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn register_as_admin_returns_400(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (status, body) = common::post_json(
         &app,
@@ -80,7 +80,7 @@ async fn register_as_admin_returns_400(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn login_with_correct_credentials_returns_tokens(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     common::post_json(
         &app,
@@ -111,7 +111,7 @@ async fn login_with_correct_credentials_returns_tokens(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn login_wrong_password_returns_401(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     common::post_json(
         &app,
@@ -141,7 +141,7 @@ async fn login_wrong_password_returns_401(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn login_unknown_email_returns_401(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (status, body) = common::post_json(
         &app,
@@ -159,7 +159,7 @@ async fn login_unknown_email_returns_401(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn login_suspended_account_returns_401(pool: sqlx::PgPool) {
-    let app = common::test_app(pool.clone());
+    let app = common::test_app(pool.clone()).await;
 
     common::post_json(
         &app,
@@ -197,7 +197,7 @@ async fn login_suspended_account_returns_401(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn request_without_token_to_protected_route_returns_401(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
     // /auth/me is a simple protected route we'll add to verify the middleware
     let (status, body) = common::get_json(&app, "/auth/me", None).await;
     assert_eq!(status, 401);
@@ -206,7 +206,7 @@ async fn request_without_token_to_protected_route_returns_401(pool: sqlx::PgPool
 
 #[sqlx::test(migrations = "./migrations")]
 async fn request_with_valid_token_to_protected_route_returns_200(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (_, reg_body) = common::post_json(
         &app,
@@ -229,7 +229,7 @@ async fn request_with_valid_token_to_protected_route_returns_200(pool: sqlx::PgP
 
 #[sqlx::test(migrations = "./migrations")]
 async fn refresh_with_valid_token_returns_new_tokens(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (_, reg_body) = common::post_json(
         &app,
@@ -259,7 +259,7 @@ async fn refresh_with_valid_token_returns_new_tokens(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn refresh_with_invalid_token_returns_401(pool: sqlx::PgPool) {
-    let app = common::test_app(pool);
+    let app = common::test_app(pool).await;
 
     let (status, body) = common::post_json(
         &app,
@@ -274,7 +274,7 @@ async fn refresh_with_invalid_token_returns_401(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn refresh_for_suspended_account_returns_401(pool: sqlx::PgPool) {
-    let app = common::test_app(pool.clone());
+    let app = common::test_app(pool.clone()).await;
 
     let (_, reg_body) = common::post_json(
         &app,

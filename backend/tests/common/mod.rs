@@ -17,11 +17,10 @@ pub fn test_config() -> Config {
     }
 }
 
-pub fn test_app(pool: PgPool) -> axum::Router {
-    let state = AppState {
-        db: pool,
-        config: test_config(),
-    };
+pub async fn test_app(pool: PgPool) -> axum::Router {
+    let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+    let redis = redis::aio::ConnectionManager::new(redis_client).await.unwrap();
+    let state = AppState { db: pool, config: test_config(), redis };
     create_router(state)
 }
 
@@ -42,14 +41,33 @@ pub async fn post_json(
         )
         .await
         .unwrap();
-
     let status = response.status();
-    let bytes = response
-        .into_body()
-        .collect()
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn post_json_auth(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
         .await
-        .unwrap()
-        .to_bytes();
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
@@ -68,9 +86,77 @@ pub async fn get_json(
         .oneshot(builder.body(Body::empty()).unwrap())
         .await
         .unwrap();
-
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
+}
+
+pub async fn put_json(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn delete_req(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(path)
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// Register a user and return the access token.
+pub async fn register_and_login(
+    app: &axum::Router,
+    email: &str,
+    role: &str,
+    display_name: &str,
+) -> String {
+    let (_, body) = post_json(
+        app,
+        "/auth/register",
+        serde_json::json!({
+            "email": email,
+            "password": "password123",
+            "role": role,
+            "display_name": display_name
+        }),
+    )
+    .await;
+    body["access_token"].as_str().unwrap().to_string()
 }

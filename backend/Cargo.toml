@@ -21,7 +21,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
 anyhow = "1"
 redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+dashmap = "5"
+futures-util = "0.3"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+reqwest = { version = "0.12", features = ["json"] }

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO jobs (id, customer_id, contractor_id, description, location_lat, location_lng, status)\n         VALUES ($1, $2, $3, $4, $5, $6, 'accepted')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0121da2c81756c20430ba1e1b60f30fb703777a4b8ba18bb1c0d4579fa31e1b6"
+}

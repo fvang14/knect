@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET suspended_at = NOW() WHERE email = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fff0e57a31ff8896d791b40128a2687b59bb984e8ac24ddc7d71428c1200ec5f"
+}

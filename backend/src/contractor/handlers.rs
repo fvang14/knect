@@ -11,6 +11,7 @@ use crate::{
     auth::middleware::ContractorUser,
     error::AppError,
     models::contractor::RateUnit,
+    ws::events::WsEvent,
     AppState,
 };
 
@@ -201,7 +202,7 @@ pub async fn update_location(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
     state.hub.publish_location(
-        &crate::ws::events::WsEvent::LocationUpdate {
+        &WsEvent::LocationUpdate {
             contractor_id: claims.sub,
             lat: req.lat,
             lng: req.lng,
@@ -311,7 +312,7 @@ pub async fn respond_to_job(
             tx.commit().await?;
             state.hub.publish_job_event(
                 job.customer_id,
-                &crate::ws::events::WsEvent::JobAccepted { job_id },
+                &WsEvent::JobAccepted { job_id },
             ).await;
         }
         "deny" => {
@@ -323,7 +324,7 @@ pub async fn respond_to_job(
             .await?;
             state.hub.publish_job_event(
                 job.customer_id,
-                &crate::ws::events::WsEvent::JobDenied { job_id },
+                &WsEvent::JobDenied { job_id },
             ).await;
         }
         _ => {
@@ -372,7 +373,7 @@ pub async fn complete_job(
 
     state.hub.publish_job_event(
         job.customer_id,
-        &crate::ws::events::WsEvent::JobCompleted { job_id },
+        &WsEvent::JobCompleted { job_id },
     ).await;
 
     Ok(StatusCode::OK)

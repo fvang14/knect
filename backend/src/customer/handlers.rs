@@ -10,6 +10,7 @@ use crate::{
     auth::middleware::{AuthUser, CustomerUser},
     error::AppError,
     models::contractor::RateUnit,
+    ws::events::WsEvent,
     AppState,
 };
 
@@ -61,9 +62,9 @@ pub async fn create_job(
 
     state.hub.publish_job_event(
         contractor.user_id,
-        &crate::ws::events::WsEvent::JobRequested {
+        &WsEvent::JobRequested {
             job_id,
-            description: req.description.clone(),
+            description: req.description,
             location_lat: req.location_lat,
             location_lng: req.location_lng,
         },
@@ -294,7 +295,7 @@ pub async fn cancel_job(
     Path(job_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let job = sqlx::query!(
-        r#"SELECT id, customer_id, status as "status: crate::models::job::JobStatus"
+        r#"SELECT id, customer_id, contractor_id, status as "status: crate::models::job::JobStatus"
            FROM jobs WHERE id = $1"#,
         job_id
     )
@@ -315,6 +316,14 @@ pub async fn cancel_job(
     )
     .execute(&state.db)
     .await?;
+
+    state
+        .hub
+        .publish_job_event(
+            job.contractor_id,
+            &crate::ws::events::WsEvent::JobCancelled { job_id },
+        )
+        .await;
 
     Ok(StatusCode::OK)
 }

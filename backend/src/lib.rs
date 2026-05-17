@@ -5,6 +5,7 @@ pub mod contractor;
 pub mod customer;
 pub mod error;
 pub mod models;
+pub mod ws;
 
 use axum::{
     routing::{delete, get, post, put},

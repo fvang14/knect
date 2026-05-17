@@ -202,9 +202,59 @@ pub async fn update_location(
     Ok(StatusCode::OK)
 }
 
+// ─── Job Queue ────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct JobQueueItem {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub status: crate::models::job::JobStatus,
+    pub description: String,
+    pub location_lat: f64,
+    pub location_lng: f64,
+    pub location_address: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_jobs(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+) -> Result<Json<Vec<JobQueueItem>>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT id, customer_id,
+                  status as "status: crate::models::job::JobStatus",
+                  description, location_lat, location_lng,
+                  location_address, created_at, updated_at
+           FROM jobs
+           WHERE contractor_id = $1
+             AND status IN ('pending', 'accepted', 'in_progress')
+           ORDER BY created_at ASC"#,
+        claims.sub
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let jobs = rows
+        .into_iter()
+        .map(|r| JobQueueItem {
+            id: r.id,
+            customer_id: r.customer_id,
+            status: r.status,
+            description: r.description,
+            location_lat: r.location_lat,
+            location_lng: r.location_lng,
+            location_address: r.location_address,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })
+        .collect();
+
+    Ok(Json(jobs))
+}
+
 // ─── Stubs for later tasks ──────────────────────────────────────────────────
 
-pub async fn list_jobs() -> StatusCode { todo!() }
 pub async fn respond_to_job() -> StatusCode { todo!() }
 pub async fn submit_quote() -> StatusCode { todo!() }
 pub async fn complete_job() -> StatusCode { todo!() }

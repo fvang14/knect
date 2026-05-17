@@ -136,3 +136,45 @@ async fn customer_cannot_post_location(pool: PgPool) {
     assert_eq!(status, 401);
     assert_eq!(body["error"], "unauthorized");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_job_queue_is_empty_initially(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "queue_c@example.com", "contractor", "QueueC").await;
+
+    let (status, body) = common::get_json(&app, "/contractor/jobs", Some(&token)).await;
+
+    assert_eq!(status, 200);
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_sees_pending_job_in_queue(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let contractor_token = common::register_and_login(&app, "cjq_contractor@example.com", "contractor", "ContractorQ").await;
+    let customer_token = common::register_and_login(&app, "cjq_customer@example.com", "customer", "CustomerQ").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (job_status, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Fix the sink",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060
+        }),
+    )
+    .await;
+    assert_eq!(job_status, 200, "job creation failed: {:?}", job_body);
+
+    let (status, body) = common::get_json(&app, "/contractor/jobs", Some(&contractor_token)).await;
+    assert_eq!(status, 200);
+    let jobs = body.as_array().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["status"], "pending");
+    assert_eq!(jobs[0]["description"], "Fix the sink");
+}

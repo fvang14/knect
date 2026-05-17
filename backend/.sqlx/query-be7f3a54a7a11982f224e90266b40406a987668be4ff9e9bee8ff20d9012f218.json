@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT tc.id, tc.name, tc.icon_slug\n         FROM trade_categories tc\n         JOIN contractor_trade_categories ctc ON ctc.category_id = tc.id\n         WHERE ctc.contractor_id = $1\n         ORDER BY tc.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "icon_slug",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "be7f3a54a7a11982f224e90266b40406a987668be4ff9e9bee8ff20d9012f218"
+}

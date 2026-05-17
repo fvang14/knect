@@ -178,3 +178,113 @@ async fn contractor_sees_pending_job_in_queue(pool: PgPool) {
     assert_eq!(jobs[0]["status"], "pending");
     assert_eq!(jobs[0]["description"], "Fix the sink");
 }
+
+// Helper: register contractor + customer, create a job, return (app, contractor_token, customer_token, job_id)
+async fn setup_pending_job(pool: &sqlx::PgPool) -> (axum::Router, String, String, String) {
+    let app = common::test_app(pool.clone()).await;
+    let contractor_token = common::register_and_login(&app, "sm_c@example.com", "contractor", "SM_C").await;
+    let customer_token = common::register_and_login(&app, "sm_k@example.com", "customer", "SM_K").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap().to_string();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Fix the pipes",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap().to_string();
+    (app, contractor_token, customer_token, job_id)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_accept_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/respond", job_id),
+        &contractor_token,
+        serde_json::json!({ "action": "accept" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(profile["is_busy"], true);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_deny_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/respond", job_id),
+        &contractor_token,
+        serde_json::json!({ "action": "deny" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(profile["is_busy"], false);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_cannot_accept_already_accepted_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/respond", job_id),
+        &contractor_token,
+        serde_json::json!({ "action": "accept" }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_complete_accepted_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/complete", job_id),
+        &contractor_token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(profile["is_busy"], false);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_cannot_complete_pending_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/complete", job_id),
+        &contractor_token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}

@@ -253,8 +253,109 @@ pub async fn list_jobs(
     Ok(Json(jobs))
 }
 
-// ─── Stubs for later tasks ──────────────────────────────────────────────────
+// ─── State Machine ────────────────────────────────────────────────────────
 
-pub async fn respond_to_job() -> StatusCode { todo!() }
+use crate::models::job::JobStatus;
+
+#[derive(Deserialize)]
+pub struct RespondRequest {
+    pub action: String, // "accept" | "deny"
+}
+
+pub async fn respond_to_job(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Path(job_id): Path<Uuid>,
+    Json(req): Json<RespondRequest>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT id, status as "status: JobStatus", contractor_id
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != JobStatus::Pending {
+        return Err(AppError::Conflict("Job is not pending".to_string()));
+    }
+
+    match req.action.as_str() {
+        "accept" => {
+            let mut tx = state.db.begin().await?;
+            sqlx::query!(
+                "UPDATE jobs SET status = 'accepted' WHERE id = $1",
+                job_id
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query!(
+                "UPDATE contractor_profiles SET is_busy = TRUE WHERE user_id = $1",
+                claims.sub
+            )
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
+        "deny" => {
+            sqlx::query!(
+                "UPDATE jobs SET status = 'denied' WHERE id = $1",
+                job_id
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        _ => {
+            return Err(AppError::BadRequest("action must be 'accept' or 'deny'".to_string()));
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+pub async fn complete_job(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT id, status as "status: JobStatus", contractor_id
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != JobStatus::Accepted && job.status != JobStatus::InProgress {
+        return Err(AppError::Conflict("Job must be accepted or in_progress to complete".to_string()));
+    }
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query!(
+        "UPDATE jobs SET status = 'completed' WHERE id = $1",
+        job_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE contractor_profiles SET is_busy = FALSE WHERE user_id = $1",
+        claims.sub
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}
+
+// ─── Stub for later task ──────────────────────────────────────────────────
+
 pub async fn submit_quote() -> StatusCode { todo!() }
-pub async fn complete_job() -> StatusCode { todo!() }

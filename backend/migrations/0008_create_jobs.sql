@@ -1,7 +1,7 @@
 CREATE TABLE jobs (
     id               UUID       PRIMARY KEY DEFAULT uuid_generate_v4(),
-    customer_id      UUID       NOT NULL REFERENCES users(id),
-    contractor_id    UUID       NOT NULL REFERENCES users(id),
+    customer_id      UUID       NOT NULL REFERENCES customer_profiles(user_id),
+    contractor_id    UUID       NOT NULL REFERENCES contractor_profiles(user_id),
     status           job_status NOT NULL DEFAULT 'pending',
     description      TEXT       NOT NULL,
     location_lat     DOUBLE PRECISION NOT NULL,
@@ -11,6 +11,8 @@ CREATE TABLE jobs (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_jobs_customer_id   ON jobs(customer_id);
-CREATE INDEX idx_jobs_contractor_id ON jobs(contractor_id);
-CREATE INDEX idx_jobs_status        ON jobs(status);
+CREATE INDEX idx_jobs_customer_id        ON jobs(customer_id);
+CREATE INDEX idx_jobs_contractor_id      ON jobs(contractor_id);
+CREATE INDEX idx_jobs_status             ON jobs(status);
+CREATE INDEX idx_jobs_contractor_status  ON jobs(contractor_id, status);
+CREATE INDEX idx_jobs_customer_status    ON jobs(customer_id, status);

@@ -7,5 +7,3 @@ CREATE TABLE users (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     suspended_at TIMESTAMPTZ
 );
-
-CREATE INDEX idx_users_email ON users(email);

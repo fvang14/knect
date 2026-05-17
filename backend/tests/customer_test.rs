@@ -1,0 +1,97 @@
+mod common;
+
+use sqlx::PgPool;
+
+/// Seeds a contractor with a known location and returns (app, contractor_token, customer_token)
+async fn setup_located_contractor(pool: &PgPool, suffix: &str) -> (axum::Router, String, String) {
+    let app = common::test_app(pool.clone()).await;
+
+    let contractor_token = common::register_and_login(
+        &app,
+        &format!("nearby_c_{suffix}@example.com"),
+        "contractor",
+        &format!("Nearby_{suffix}"),
+    )
+    .await;
+
+    let customer_token = common::register_and_login(
+        &app,
+        &format!("nearby_k_{suffix}@example.com"),
+        "customer",
+        &format!("Customer_{suffix}"),
+    )
+    .await;
+
+    // Set contractor available
+    common::post_json_auth(&app, "/contractor/availability", &contractor_token, serde_json::json!({ "available": true })).await;
+
+    // Set location: New York City
+    common::post_json_auth(&app, "/location", &contractor_token, serde_json::json!({
+        "lat": 40.7128,
+        "lng": -74.0060
+    })).await;
+
+    (app, contractor_token, customer_token)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_see_nearby_contractor(pool: PgPool) {
+    let (app, _, customer_token) = setup_located_contractor(&pool, "a").await;
+
+    let (status, body) = common::get_json(
+        &app,
+        "/contractors/nearby?lat=40.7128&lng=-74.0060&radius=10000",
+        Some(&customer_token),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    let contractors = body.as_array().unwrap();
+    assert!(!contractors.is_empty(), "expected at least one nearby contractor");
+    assert_eq!(contractors[0]["display_name"], "Nearby_a");
+    assert!(contractors[0]["distance_meters"].as_f64().unwrap() < 100.0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_outside_radius_not_returned(pool: PgPool) {
+    let (app, _, customer_token) = setup_located_contractor(&pool, "b").await;
+
+    // Search 1000km away in Los Angeles (contractor is in NYC)
+    let (status, body) = common::get_json(
+        &app,
+        "/contractors/nearby?lat=34.0522&lng=-118.2437&radius=5000",
+        Some(&customer_token),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    let contractors = body.as_array().unwrap();
+    assert!(contractors.is_empty(), "contractor should be outside radius");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unauthenticated_user_cannot_browse_nearby(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let (status, body) = common::get_json(&app, "/contractors/nearby?lat=40.7&lng=-74.0&radius=5000", None).await;
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_view_public_contractor_profile(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "c").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (status, body) = common::get_json(
+        &app,
+        &format!("/contractors/{}", contractor_id),
+        Some(&customer_token),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body["display_name"], "Nearby_c");
+    assert!(body["ratings"].is_array());
+}

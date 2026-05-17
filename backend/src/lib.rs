@@ -7,6 +7,8 @@ pub mod error;
 pub mod models;
 pub mod ws;
 
+use std::sync::Arc;
+
 use axum::{
     routing::{delete, get, post, put},
     Router,
@@ -21,16 +23,17 @@ pub struct AppState {
     pub db: PgPool,
     pub config: Config,
     pub redis: redis::aio::ConnectionManager,
+    pub hub: Arc<ws::WsHub>,
 }
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
-        // Auth (Plan 1)
+        // Auth
         .route("/auth/register", post(auth::handlers::register))
         .route("/auth/login", post(auth::handlers::login))
         .route("/auth/refresh", post(auth::handlers::refresh))
         .route("/auth/me", get(auth::handlers::me))
-        // Contractor (Plan 2)
+        // Contractor
         .route("/contractor/profile", get(contractor::handlers::get_profile))
         .route("/contractor/profile", put(contractor::handlers::update_profile))
         .route("/contractor/availability", post(contractor::handlers::set_availability))
@@ -39,18 +42,20 @@ pub fn create_router(state: AppState) -> Router {
         .route("/jobs/:id/respond", post(contractor::handlers::respond_to_job))
         .route("/jobs/:id/quote", post(contractor::handlers::submit_quote))
         .route("/jobs/:id/complete", post(contractor::handlers::complete_job))
-        // Customer (Plan 2)
+        // Customer
         .route("/contractors/nearby", get(customer::handlers::nearby_contractors))
         .route("/contractors/:id", get(customer::handlers::contractor_profile))
         .route("/jobs", post(customer::handlers::create_job))
         .route("/jobs/:id", get(customer::handlers::get_job))
         .route("/jobs/:id", delete(customer::handlers::cancel_job))
         .route("/jobs/:id/rating", post(customer::handlers::submit_rating))
-        // Admin (Plan 2)
+        // Admin
         .route("/admin/users", get(admin::handlers::list_users))
         .route("/admin/users/:id/suspend", put(admin::handlers::suspend_user))
         .route("/admin/jobs", get(admin::handlers::list_jobs))
         .route("/admin/metrics", get(admin::handlers::get_metrics))
+        // WebSocket
+        .route("/ws", get(ws::handler::ws_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

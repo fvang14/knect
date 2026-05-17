@@ -1,4 +1,6 @@
-use knect_api::{config::Config, create_router, AppState};
+use std::sync::Arc;
+
+use knect_api::{config::Config, create_router, ws, AppState};
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -27,7 +29,31 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Redis connection failed: {e}"))?;
 
-    let state = AppState { db: pool, config: config.clone(), redis };
+    let hub = ws::WsHub::new(redis.clone());
+
+    let hub_loc = Arc::clone(&hub);
+    let redis_url_loc = config.redis_url.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = ws::run_location_subscriber(Arc::clone(&hub_loc), &redis_url_loc).await {
+                tracing::error!("Location subscriber crashed: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    });
+
+    let hub_ev = Arc::clone(&hub);
+    let redis_url_ev = config.redis_url.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = ws::run_events_subscriber(Arc::clone(&hub_ev), &redis_url_ev).await {
+                tracing::error!("Events subscriber crashed: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    });
+
+    let state = AppState { db: pool, config: config.clone(), redis, hub };
     let app = create_router(state);
 
     let addr = format!("0.0.0.0:{}", config.port);

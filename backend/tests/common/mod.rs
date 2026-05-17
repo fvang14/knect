@@ -3,8 +3,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use knect_api::{config::Config, create_router, AppState};
+use knect_api::{config::Config, create_router, ws::WsHub, AppState};
 use sqlx::PgPool;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tower::ServiceExt;
 
 pub fn test_config() -> Config {
@@ -20,8 +22,54 @@ pub fn test_config() -> Config {
 pub async fn test_app(pool: PgPool) -> axum::Router {
     let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
     let redis = redis::aio::ConnectionManager::new(redis_client).await.unwrap();
-    let state = AppState { db: pool, config: test_config(), redis };
+    let hub = WsHub::new(redis.clone());
+    let state = AppState { db: pool, config: test_config(), redis, hub };
     create_router(state)
+}
+
+/// Start a real bound server for WebSocket tests. Returns (addr, jwt_secret).
+/// Background subscriber tasks are spawned so pub/sub works end-to-end.
+pub async fn start_ws_server(pool: PgPool) -> (SocketAddr, String) {
+    let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+    let redis = redis::aio::ConnectionManager::new(redis_client.clone()).await.unwrap();
+    let hub = WsHub::new(redis.clone());
+
+    let hub_loc = Arc::clone(&hub);
+    tokio::spawn(async move {
+        loop {
+            let _ = knect_api::ws::run_location_subscriber(
+                Arc::clone(&hub_loc),
+                "redis://localhost:6379",
+            )
+            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+
+    let hub_ev = Arc::clone(&hub);
+    tokio::spawn(async move {
+        loop {
+            let _ = knect_api::ws::run_events_subscriber(
+                Arc::clone(&hub_ev),
+                "redis://localhost:6379",
+            )
+            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+
+    let config = test_config();
+    let jwt_secret = config.jwt_secret.clone();
+    let state = AppState { db: pool, config, redis, hub };
+    let app = create_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (addr, jwt_secret)
 }
 
 pub async fn post_json(

@@ -95,3 +95,116 @@ async fn customer_can_view_public_contractor_profile(pool: PgPool) {
     assert_eq!(body["display_name"], "Nearby_c");
     assert!(body["ratings"].is_array());
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_create_and_view_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "d").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (create_status, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Replace faucet",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    assert_eq!(create_status, 200);
+    let job_id = job_body["id"].as_str().unwrap();
+
+    let (status, body) = common::get_json(
+        &app,
+        &format!("/jobs/{}", job_id),
+        Some(&customer_token),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["description"], "Replace faucet");
+    assert!(body["quote"].is_null());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_view_their_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "e").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Fix roof",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap();
+
+    let (status, body) = common::get_json(&app, &format!("/jobs/{}", job_id), Some(&contractor_token)).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["description"], "Fix roof");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_cancel_pending_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "f").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Trim hedge",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap();
+
+    let (status, _) = common::delete_req(&app, &format!("/jobs/{}", job_id), &customer_token).await;
+    assert_eq!(status, 200);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_cancel_accepted_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "g").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Mow lawn",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap();
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, body) = common::delete_req(&app, &format!("/jobs/{}", job_id), &customer_token).await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}

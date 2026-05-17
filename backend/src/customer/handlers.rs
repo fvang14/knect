@@ -200,8 +200,114 @@ pub async fn contractor_profile(
     }))
 }
 
-// ─── Stubs for later tasks ────────────────────────────────────────────────
+// ─── Job Management ───────────────────────────────────────────────────────
 
-pub async fn get_job() -> StatusCode { todo!() }
-pub async fn cancel_job() -> StatusCode { todo!() }
+#[derive(Serialize)]
+pub struct QuoteDetail {
+    pub id: Uuid,
+    pub base_rate_snapshot: Option<f64>,
+    pub custom_amount: Option<f64>,
+    pub custom_note: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize)]
+pub struct JobDetail {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub contractor_id: Uuid,
+    pub status: crate::models::job::JobStatus,
+    pub description: String,
+    pub location_lat: f64,
+    pub location_lng: f64,
+    pub location_address: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub quote: Option<QuoteDetail>,
+}
+
+pub async fn get_job(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<JobDetail>, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT id, customer_id, contractor_id,
+                  status as "status: crate::models::job::JobStatus",
+                  description, location_lat, location_lng,
+                  location_address, created_at, updated_at
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.customer_id != claims.sub && job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+
+    let quote = sqlx::query!(
+        "SELECT id, base_rate_snapshot, custom_amount, custom_note, created_at
+         FROM quotes WHERE job_id = $1",
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .map(|r| QuoteDetail {
+        id: r.id,
+        base_rate_snapshot: r.base_rate_snapshot,
+        custom_amount: r.custom_amount,
+        custom_note: r.custom_note,
+        created_at: r.created_at,
+    });
+
+    Ok(Json(JobDetail {
+        id: job.id,
+        customer_id: job.customer_id,
+        contractor_id: job.contractor_id,
+        status: job.status,
+        description: job.description,
+        location_lat: job.location_lat,
+        location_lng: job.location_lng,
+        location_address: job.location_address,
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+        quote,
+    }))
+}
+
+pub async fn cancel_job(
+    State(state): State<AppState>,
+    CustomerUser(claims): CustomerUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT id, customer_id, status as "status: crate::models::job::JobStatus"
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.customer_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != crate::models::job::JobStatus::Pending {
+        return Err(AppError::Conflict("Only pending jobs can be cancelled".to_string()));
+    }
+
+    sqlx::query!(
+        "UPDATE jobs SET status = 'cancelled' WHERE id = $1",
+        job_id
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}
+
+// ─── Stub for later task ──────────────────────────────────────────────────
+
 pub async fn submit_rating() -> StatusCode { todo!() }

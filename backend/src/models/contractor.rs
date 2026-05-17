@@ -11,7 +11,7 @@ pub enum RateUnit {
     PerJob,
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 pub struct ContractorProfile {
     pub user_id: Uuid,
     pub display_name: String,

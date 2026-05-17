@@ -12,7 +12,7 @@ pub enum UserRole {
     Admin,
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 pub struct User {
     pub id: Uuid,
     pub email: String,

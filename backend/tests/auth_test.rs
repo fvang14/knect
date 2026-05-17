@@ -194,3 +194,35 @@ async fn login_suspended_account_returns_401(pool: sqlx::PgPool) {
     assert_eq!(status, 401);
     assert_eq!(body["error"], "unauthorized");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn request_without_token_to_protected_route_returns_401(pool: sqlx::PgPool) {
+    let app = common::test_app(pool);
+    // /auth/me is a simple protected route we'll add to verify the middleware
+    let (status, body) = common::get_json(&app, "/auth/me", None).await;
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn request_with_valid_token_to_protected_route_returns_200(pool: sqlx::PgPool) {
+    let app = common::test_app(pool);
+
+    let (_, reg_body) = common::post_json(
+        &app,
+        "/auth/register",
+        serde_json::json!({
+            "email": "me@example.com",
+            "password": "password",
+            "role": "customer",
+            "display_name": "Me"
+        }),
+    )
+    .await;
+
+    let token = reg_body["access_token"].as_str().unwrap();
+    let (status, body) = common::get_json(&app, "/auth/me", Some(token)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body["email"], "me@example.com");
+}

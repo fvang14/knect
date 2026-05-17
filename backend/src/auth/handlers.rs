@@ -4,8 +4,9 @@ use uuid::Uuid;
 
 use crate::{
     auth::{
+        middleware::AuthUser,
         password::hash_password,
-        tokens::{create_access_token, create_refresh_token, verify_token, Claims},
+        tokens::{create_access_token, create_refresh_token},
     },
     error::AppError,
     models::user::UserRole,
@@ -136,4 +137,24 @@ pub async fn refresh(
     Json(_req): Json<RefreshRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
     todo!()  // implemented in Task 10
+}
+
+pub async fn me(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let row = sqlx::query!(
+        "SELECT email, phone FROM users WHERE id = $1",
+        claims.sub
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "id": claims.sub,
+        "email": row.email,
+        "phone": row.phone,
+        "role": claims.role,
+    })))
 }

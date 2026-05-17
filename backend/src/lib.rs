@@ -4,7 +4,7 @@ pub mod error;
 pub mod models;
 
 use axum::{
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use sqlx::PgPool;
@@ -23,6 +23,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/register", post(auth::handlers::register))
         .route("/auth/login", post(auth::handlers::login))
         .route("/auth/refresh", post(auth::handlers::refresh))
+        .route("/auth/me", get(auth::handlers::me))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

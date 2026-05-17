@@ -6,7 +6,7 @@ use crate::{
     auth::{
         middleware::AuthUser,
         password::hash_password,
-        tokens::{create_access_token, create_refresh_token},
+        tokens::{create_access_token, create_refresh_token, verify_token},
     },
     error::AppError,
     models::user::UserRole,
@@ -133,10 +133,29 @@ pub struct RefreshRequest {
 }
 
 pub async fn refresh(
-    State(_state): State<AppState>,
-    Json(_req): Json<RefreshRequest>,
+    State(state): State<AppState>,
+    Json(req): Json<RefreshRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
-    todo!()  // implemented in Task 10
+    let claims = verify_token(&req.refresh_token, &state.config.jwt_refresh_secret)?;
+
+    let row = sqlx::query!(
+        "SELECT id, suspended_at FROM users WHERE id = $1",
+        claims.sub
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("User not found".to_string()))?;
+
+    if row.suspended_at.is_some() {
+        return Err(AppError::Unauthorized("Account suspended".to_string()));
+    }
+
+    let access_token =
+        create_access_token(claims.sub, claims.role.clone(), &state.config.jwt_secret)?;
+    let refresh_token =
+        create_refresh_token(claims.sub, claims.role, &state.config.jwt_refresh_secret)?;
+
+    Ok(Json(AuthResponse { access_token, refresh_token }))
 }
 
 pub async fn me(

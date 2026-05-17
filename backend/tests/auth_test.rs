@@ -226,3 +226,89 @@ async fn request_with_valid_token_to_protected_route_returns_200(pool: sqlx::PgP
     assert_eq!(status, 200);
     assert_eq!(body["email"], "me@example.com");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn refresh_with_valid_token_returns_new_tokens(pool: sqlx::PgPool) {
+    let app = common::test_app(pool);
+
+    let (_, reg_body) = common::post_json(
+        &app,
+        "/auth/register",
+        serde_json::json!({
+            "email": "refresh@example.com",
+            "password": "password",
+            "role": "contractor",
+            "display_name": "Refresh User"
+        }),
+    )
+    .await;
+
+    let refresh_token = reg_body["refresh_token"].as_str().unwrap();
+
+    // JWT exp has 1s resolution; ensure the new token gets a later timestamp.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+    let (status, body) = common::post_json(
+        &app,
+        "/auth/refresh",
+        serde_json::json!({ "refresh_token": refresh_token }),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert!(body["access_token"].is_string());
+    assert!(body["refresh_token"].is_string());
+    // New tokens should differ from originals
+    assert_ne!(body["access_token"].as_str().unwrap(), reg_body["access_token"].as_str().unwrap());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn refresh_with_invalid_token_returns_401(pool: sqlx::PgPool) {
+    let app = common::test_app(pool);
+
+    let (status, body) = common::post_json(
+        &app,
+        "/auth/refresh",
+        serde_json::json!({ "refresh_token": "not.a.valid.token" }),
+    )
+    .await;
+
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn refresh_for_suspended_account_returns_401(pool: sqlx::PgPool) {
+    let app = common::test_app(pool.clone());
+
+    let (_, reg_body) = common::post_json(
+        &app,
+        "/auth/register",
+        serde_json::json!({
+            "email": "susp_refresh@example.com",
+            "password": "password",
+            "role": "customer",
+            "display_name": "Suspended"
+        }),
+    )
+    .await;
+
+    sqlx::query!(
+        "UPDATE users SET suspended_at = NOW() WHERE email = $1",
+        "susp_refresh@example.com"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let refresh_token = reg_body["refresh_token"].as_str().unwrap();
+    let (status, body) = common::post_json(
+        &app,
+        "/auth/refresh",
+        serde_json::json!({ "refresh_token": refresh_token }),
+    )
+    .await;
+
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}

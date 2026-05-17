@@ -3,8 +3,12 @@ pub mod config;
 pub mod error;
 pub mod models;
 
-use axum::Router;
+use axum::{
+    routing::post,
+    Router,
+};
 use sqlx::PgPool;
+use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
 
@@ -15,5 +19,10 @@ pub struct AppState {
 }
 
 pub fn create_router(state: AppState) -> Router {
-    Router::new().with_state(state)
+    Router::new()
+        .route("/auth/register", post(auth::handlers::register))
+        .route("/auth/login", post(auth::handlers::login))
+        .route("/auth/refresh", post(auth::handlers::refresh))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }

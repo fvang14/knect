@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, customer_id, contractor_id,\n                  status as \"status: crate::models::job::JobStatus\",\n                  description, created_at\n           FROM jobs ORDER BY created_at DESC LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "customer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "contractor_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: crate::models::job::JobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "accepted",
+                "denied",
+                "in_progress",
+                "completed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8bc40c60d2cdfe4b72d4bb30ce691cca8784b324fc1502c1e94ec7006a825d4d"
+}

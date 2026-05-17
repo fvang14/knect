@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(AVG(score::double precision), 0.0) FROM ratings",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "coalesce",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "17790ea70e96dea8e01734fa8989238d0193961858f597d85cac4e4ee306b2e5"
+}

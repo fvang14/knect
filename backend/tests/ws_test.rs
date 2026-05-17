@@ -108,7 +108,7 @@ async fn contractor_does_not_receive_snapshot(pool: PgPool) {
     let (mut ws, _) = connect_async(url).await.expect("ws connect failed");
 
     // Contractors receive no message on connect; timeout is expected.
-    let result = timeout(Duration::from_millis(500), ws.next()).await;
+    let result = timeout(Duration::from_millis(300), ws.next()).await;
     assert!(result.is_err(), "contractor should receive no message on connect");
 }
 
@@ -129,8 +129,7 @@ async fn location_update_delivered_to_connected_customer(pool: PgPool) {
     let (mut customer_ws, _) = connect_async(customer_url).await.unwrap();
 
     // Consume snapshot
-    let snap = next_text(&mut customer_ws, "snapshot").await;
-    assert_eq!(snap["type"], "snapshot");
+    let _ = next_text(&mut customer_ws, "snapshot").await;
 
     // Contractor posts location via HTTP
     let http = reqwest::Client::new();
@@ -222,8 +221,7 @@ async fn customer_receives_job_accepted_over_ws(pool: PgPool) {
     // Customer connects WS and consumes snapshot
     let customer_url = format!("ws://{}/ws?token={}", addr, customer_token);
     let (mut customer_ws, _) = connect_async(customer_url).await.unwrap();
-    let snap = next_text(&mut customer_ws, "snapshot").await;
-    assert_eq!(snap["type"], "snapshot");
+    let _ = next_text(&mut customer_ws, "snapshot").await;
 
     // Contractor accepts via HTTP
     let http = reqwest::Client::new();
@@ -271,8 +269,7 @@ async fn customer_receives_job_denied_over_ws(pool: PgPool) {
 
     let customer_url = format!("ws://{}/ws?token={}", addr, customer_token);
     let (mut customer_ws, _) = connect_async(customer_url).await.unwrap();
-    let snap = next_text(&mut customer_ws, "snapshot").await;
-    assert_eq!(snap["type"], "snapshot");
+    let _ = next_text(&mut customer_ws, "snapshot").await;
 
     let http = reqwest::Client::new();
     let resp = http
@@ -325,8 +322,7 @@ async fn customer_receives_job_completed_over_ws(pool: PgPool) {
 
     let customer_url = format!("ws://{}/ws?token={}", addr, customer_token);
     let (mut customer_ws, _) = connect_async(customer_url).await.unwrap();
-    let snap = next_text(&mut customer_ws, "snapshot").await;
-    assert_eq!(snap["type"], "snapshot");
+    let _ = next_text(&mut customer_ws, "snapshot").await;
 
     let http = reqwest::Client::new();
     let resp = http

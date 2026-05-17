@@ -102,6 +102,7 @@ pub async fn nearby_contractors(
                ST_Distance(current_location, ST_MakePoint($1, $2)::geography) as distance_meters
            FROM contractor_profiles
            WHERE is_available = TRUE
+             AND is_busy = FALSE
              AND current_location IS NOT NULL
              AND ST_DWithin(current_location, ST_MakePoint($1, $2)::geography, $3)
            ORDER BY distance_meters ASC

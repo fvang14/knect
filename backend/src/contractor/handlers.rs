@@ -177,13 +177,7 @@ pub async fn update_location(
     ContractorUser(claims): ContractorUser,
     Json(req): Json<LocationRequest>,
 ) -> Result<StatusCode, AppError> {
-    let key = format!("contractor:{}:pos", claims.sub);
-    let value = format!("{},{}", req.lat, req.lng);
-    let mut conn = state.redis.clone();
-    conn.set_ex::<_, _, ()>(&key, &value, 30)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
-
+    // Write durable record first; Redis is a cache and will expire in 30s regardless
     // ST_MakePoint(longitude, latitude) — PostGIS uses (lng, lat) order
     sqlx::query!(
         r#"UPDATE contractor_profiles
@@ -198,6 +192,13 @@ pub async fn update_location(
     )
     .execute(&state.db)
     .await?;
+
+    let key = format!("contractor:{}:pos", claims.sub);
+    let value = format!("{},{}", req.lat, req.lng);
+    let mut conn = state.redis.clone();
+    conn.set_ex::<_, _, ()>(&key, &value, 30)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
     Ok(StatusCode::OK)
 }
@@ -386,7 +387,7 @@ pub async fn submit_quote(
         return Err(AppError::Unauthorized("Not your job".to_string()));
     }
     if job.status != JobStatus::Accepted && job.status != JobStatus::InProgress {
-        return Err(AppError::Conflict("Job must be accepted to submit a quote".to_string()));
+        return Err(AppError::Conflict("Job must be accepted or in progress to submit a quote".to_string()));
     }
 
     sqlx::query!(

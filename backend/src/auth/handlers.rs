@@ -45,6 +45,9 @@ pub async fn register(
 
     let password_hash = hash_password(&req.password)?;
     let user_id = Uuid::new_v4();
+    let role = req.role;
+
+    let mut tx = state.db.begin().await?;
 
     sqlx::query!(
         "INSERT INTO users (id, email, phone, password_hash, role) VALUES ($1, $2, $3, $4, $5)",
@@ -52,19 +55,19 @@ pub async fn register(
         req.email,
         req.phone,
         password_hash,
-        req.role.clone() as UserRole,
+        role.clone() as UserRole,
     )
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    match req.role {
+    match &role {
         UserRole::Contractor => {
             sqlx::query!(
                 "INSERT INTO contractor_profiles (user_id, display_name) VALUES ($1, $2)",
                 user_id,
                 req.display_name,
             )
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
         }
         UserRole::Customer => {
@@ -73,16 +76,18 @@ pub async fn register(
                 user_id,
                 req.display_name,
             )
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
         }
         UserRole::Admin => unreachable!(),
     }
 
+    tx.commit().await?;
+
     let access_token =
-        create_access_token(user_id, req.role.clone(), &state.config.jwt_secret)?;
+        create_access_token(user_id, role.clone(), &state.config.jwt_secret)?;
     let refresh_token =
-        create_refresh_token(user_id, req.role, &state.config.jwt_refresh_secret)?;
+        create_refresh_token(user_id, role, &state.config.jwt_refresh_secret)?;
 
     Ok((StatusCode::OK, Json(AuthResponse { access_token, refresh_token })))
 }

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ratings (job_id, contractor_id, customer_id, score, review_text)\n         VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int2",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a4ac42e2ab52dfbdf5f87b03e103f4c976ca0ad27bbd2a6385ed6d719c4f00a1"
+}

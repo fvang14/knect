@@ -208,3 +208,113 @@ async fn customer_cannot_cancel_accepted_job(pool: PgPool) {
     assert_eq!(status, 409);
     assert_eq!(body["error"], "conflict");
 }
+
+/// Full job lifecycle helper: create job → accept → complete → return job_id
+async fn setup_completed_job(pool: &PgPool, suffix: &str) -> (axum::Router, String, String, String) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(pool, suffix).await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap().to_string();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Paint fence",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap().to_string();
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+    common::post_json_auth(&app, &format!("/jobs/{}/complete", job_id), &contractor_token, serde_json::json!({})).await;
+
+    (app, contractor_token, customer_token, job_id)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_rate_completed_job(pool: PgPool) {
+    let (app, _, customer_token, job_id) = setup_completed_job(&pool, "h").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/rating", job_id),
+        &customer_token,
+        serde_json::json!({ "score": 5, "review_text": "Excellent work!" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn rating_updates_contractor_avg(pool: PgPool) {
+    let (app, contractor_token, customer_token, job_id) = setup_completed_job(&pool, "i").await;
+
+    let (_, before) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(before["rating_count"], 0);
+
+    common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/rating", job_id),
+        &customer_token,
+        serde_json::json!({ "score": 4 }),
+    )
+    .await;
+
+    let (_, after) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(after["rating_count"], 1);
+    assert_eq!(after["avg_rating"], 4.0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_rate_pending_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "j").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Plant tree",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap();
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/rating", job_id),
+        &customer_token,
+        serde_json::json!({ "score": 5 }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_rate_same_job_twice(pool: PgPool) {
+    let (app, _, customer_token, job_id) = setup_completed_job(&pool, "k").await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/rating", job_id), &customer_token, serde_json::json!({ "score": 5 })).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/rating", job_id),
+        &customer_token,
+        serde_json::json!({ "score": 3 }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}

@@ -308,6 +308,78 @@ pub async fn cancel_job(
     Ok(StatusCode::OK)
 }
 
-// ─── Stub for later task ──────────────────────────────────────────────────
+// ─── Ratings ──────────────────────────────────────────────────────────────
 
-pub async fn submit_rating() -> StatusCode { todo!() }
+#[derive(Deserialize)]
+pub struct RatingRequest {
+    pub score: i16,
+    pub review_text: Option<String>,
+}
+
+pub async fn submit_rating(
+    State(state): State<AppState>,
+    CustomerUser(claims): CustomerUser,
+    Path(job_id): Path<Uuid>,
+    Json(req): Json<RatingRequest>,
+) -> Result<StatusCode, AppError> {
+    if req.score < 1 || req.score > 5 {
+        return Err(AppError::BadRequest("Score must be between 1 and 5".to_string()));
+    }
+
+    let job = sqlx::query!(
+        r#"SELECT customer_id, contractor_id,
+                  status as "status: crate::models::job::JobStatus"
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.customer_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != crate::models::job::JobStatus::Completed {
+        return Err(AppError::Conflict("Can only rate completed jobs".to_string()));
+    }
+
+    let existing = sqlx::query!(
+        "SELECT id FROM ratings WHERE job_id = $1",
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if existing.is_some() {
+        return Err(AppError::Conflict("Job already rated".to_string()));
+    }
+
+    let mut tx = state.db.begin().await?;
+
+    sqlx::query!(
+        "INSERT INTO ratings (job_id, contractor_id, customer_id, score, review_text)
+         VALUES ($1, $2, $3, $4, $5)",
+        job_id,
+        job.contractor_id,
+        claims.sub,
+        req.score,
+        req.review_text,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        r#"UPDATE contractor_profiles SET
+               avg_rating = (avg_rating * rating_count + $1::double precision) / (rating_count + 1),
+               rating_count = rating_count + 1
+           WHERE user_id = $2"#,
+        req.score as f64,
+        job.contractor_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}

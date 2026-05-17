@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE contractor_profiles SET\n               avg_rating = (avg_rating * rating_count + $1::double precision) / (rating_count + 1),\n               rating_count = rating_count + 1\n           WHERE user_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c9fdc1acfc65cd8339df48b8f3a16812c878e350748ef0f03ddc3799049dcf23"
+}

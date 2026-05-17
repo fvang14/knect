@@ -30,13 +30,32 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Guards env-var mutation so parallel tests don't race on global state.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn from_env_errors_when_database_url_missing() {
-        std::env::remove_var("DATABASE_URL");
-        std::env::remove_var("REDIS_URL");
-        std::env::remove_var("JWT_SECRET");
-        std::env::remove_var("JWT_REFRESH_SECRET");
-        assert!(Config::from_env().is_err());
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let saved: Vec<(&str, Option<String>)> = ["DATABASE_URL", "REDIS_URL", "JWT_SECRET", "JWT_REFRESH_SECRET"]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+
+        for (k, _) in &saved {
+            std::env::remove_var(k);
+        }
+
+        let result = Config::from_env();
+
+        // Restore env vars
+        for (k, v) in saved {
+            if let Some(val) = v {
+                std::env::set_var(k, val);
+            }
+        }
+
+        assert!(result.is_err());
     }
 }

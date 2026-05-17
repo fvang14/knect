@@ -3,7 +3,7 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Quote {
     pub id: Uuid,
     pub job_id: Uuid,

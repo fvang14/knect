@@ -47,7 +47,18 @@ mod tests {
             std::env::remove_var(k);
         }
 
+        // Temporarily hide .env so dotenvy::dotenv() inside from_env() cannot
+        // reload the variables we just removed.
+        let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env");
+        let env_hidden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env.bak_test");
+        let renamed = std::fs::rename(&env_path, &env_hidden).is_ok();
+
         let result = Config::from_env();
+
+        // Restore .env before any assert so it's always put back.
+        if renamed {
+            let _ = std::fs::rename(&env_hidden, &env_path);
+        }
 
         // Restore env vars
         for (k, v) in saved {

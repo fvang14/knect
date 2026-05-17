@@ -15,7 +15,7 @@ pub enum JobStatus {
     Cancelled,
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Job {
     pub id: Uuid,
     pub customer_id: Uuid,

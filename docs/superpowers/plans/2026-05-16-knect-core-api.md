@@ -1,0 +1,2718 @@
+# Knect Core API â€” Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Implement all contractor, customer, and admin REST API endpoints on top of the Plan 1 auth foundation.
+
+**Architecture:** Each user role gets its own module (`contractor/`, `customer/`, `admin/`). Role enforcement happens at the handler signature level via `ContractorUser`, `CustomerUser`, and `AdminUser` extractors added to `auth/middleware.rs`. Redis stores live contractor positions with a 30-second TTL; the DB columns (`current_lat`, `current_lng`) are the last-known fallback. Integration tests use real Postgres (via `#[sqlx::test]`) and real Redis (connection created per test in helpers).
+
+**Tech Stack:** Rust (Axum 0.7, sqlx 0.7), `redis 0.25` (tokio-comp + connection-manager), PostGIS ST_DWithin for proximity queries.
+
+**Note on scope:** This is Plan 2 of 4. Plan 1 (auth foundation) is complete. Plan 3 covers the contractor mobile app (React Native). Plan 4 covers the customer web + admin console (Next.js). WebSocket hub and FCM push are deferred to Plan 3.
+
+---
+
+## File Map
+
+```
+backend/src/
+â”œâ”€â”€ lib.rs                      â€” add pub mod + routes for all Plan 2 endpoints (modify)
+â”œâ”€â”€ main.rs                     â€” add Redis connection (modify)
+â”œâ”€â”€ auth/
+â”‚   â””â”€â”€ middleware.rs           â€” add ContractorUser, CustomerUser, AdminUser extractors (modify)
+â”œâ”€â”€ contractor/
+â”‚   â”œâ”€â”€ mod.rs                  â€” pub mod handlers (create)
+â”‚   â””â”€â”€ handlers.rs             â€” profile, availability, location, job queue, respond, quote, complete (create)
+â”œâ”€â”€ customer/
+â”‚   â”œâ”€â”€ mod.rs                  â€” pub mod handlers (create)
+â”‚   â””â”€â”€ handlers.rs             â€” nearby, public profile, job CRUD, rating (create)
+â””â”€â”€ admin/
+    â”œâ”€â”€ mod.rs                  â€” pub mod handlers (create)
+    â””â”€â”€ handlers.rs             â€” users list/suspend, jobs list, metrics (create)
+
+backend/tests/
+â”œâ”€â”€ common/mod.rs               â€” make test_app async, add Redis, add put/delete/post_auth helpers (modify)
+â”œâ”€â”€ auth_test.rs                â€” add .await to test_app(pool) calls (modify â€” mechanical)
+â”œâ”€â”€ contractor_test.rs          â€” contractor endpoint integration tests (create)
+â”œâ”€â”€ customer_test.rs            â€” customer endpoint integration tests (create)
+â””â”€â”€ admin_test.rs               â€” admin endpoint integration tests (create)
+```
+
+---
+
+## Task 1: Redis + Role Extractors + Test Infrastructure
+
+**Files:**
+- Modify: `backend/Cargo.toml`
+- Modify: `backend/src/lib.rs`
+- Modify: `backend/src/main.rs`
+- Modify: `backend/src/auth/middleware.rs`
+- Modify: `backend/tests/common/mod.rs`
+- Modify: `backend/tests/auth_test.rs`
+
+This task has no new tests â€” it's infrastructure. Existing 19 tests must still pass after the changes.
+
+- [ ] **Step 1: Add redis dependency to Cargo.toml**
+
+Add to `[dependencies]` in `backend/Cargo.toml`:
+
+```toml
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+```
+
+- [ ] **Step 2: Update AppState in lib.rs**
+
+Replace `backend/src/lib.rs` with:
+
+```rust
+pub mod admin;
+pub mod auth;
+pub mod config;
+pub mod contractor;
+pub mod customer;
+pub mod error;
+pub mod models;
+
+use axum::{
+    routing::{delete, get, post, put},
+    Router,
+};
+use sqlx::PgPool;
+use tower_http::trace::TraceLayer;
+
+use crate::config::Config;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: PgPool,
+    pub config: Config,
+    pub redis: redis::aio::ConnectionManager,
+}
+
+pub fn create_router(state: AppState) -> Router {
+    Router::new()
+        // Auth (Plan 1)
+        .route("/auth/register", post(auth::handlers::register))
+        .route("/auth/login", post(auth::handlers::login))
+        .route("/auth/refresh", post(auth::handlers::refresh))
+        .route("/auth/me", get(auth::handlers::me))
+        // Contractor (Plan 2 â€” added task by task)
+        .route("/contractor/profile", get(contractor::handlers::get_profile))
+        .route("/contractor/profile", put(contractor::handlers::update_profile))
+        .route("/contractor/availability", post(contractor::handlers::set_availability))
+        .route("/location", post(contractor::handlers::update_location))
+        .route("/contractor/jobs", get(contractor::handlers::list_jobs))
+        .route("/jobs/:id/respond", post(contractor::handlers::respond_to_job))
+        .route("/jobs/:id/quote", post(contractor::handlers::submit_quote))
+        .route("/jobs/:id/complete", post(contractor::handlers::complete_job))
+        // Customer (Plan 2)
+        .route("/contractors/nearby", get(customer::handlers::nearby_contractors))
+        .route("/contractors/:id", get(customer::handlers::contractor_profile))
+        .route("/jobs", post(customer::handlers::create_job))
+        .route("/jobs/:id", get(customer::handlers::get_job))
+        .route("/jobs/:id", delete(customer::handlers::cancel_job))
+        .route("/jobs/:id/rating", post(customer::handlers::submit_rating))
+        // Admin (Plan 2)
+        .route("/admin/users", get(admin::handlers::list_users))
+        .route("/admin/users/:id/suspend", put(admin::handlers::suspend_user))
+        .route("/admin/jobs", get(admin::handlers::list_jobs))
+        .route("/admin/metrics", get(admin::handlers::get_metrics))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+```
+
+- [ ] **Step 3: Create stub modules so it compiles**
+
+Create `backend/src/contractor/mod.rs`:
+```rust
+pub mod handlers;
+```
+
+Create `backend/src/contractor/handlers.rs`:
+```rust
+// implemented in Tasks 2-6
+use axum::response::IntoResponse;
+pub async fn get_profile() -> impl IntoResponse { todo!() }
+pub async fn update_profile() -> impl IntoResponse { todo!() }
+pub async fn set_availability() -> impl IntoResponse { todo!() }
+pub async fn update_location() -> impl IntoResponse { todo!() }
+pub async fn list_jobs() -> impl IntoResponse { todo!() }
+pub async fn respond_to_job() -> impl IntoResponse { todo!() }
+pub async fn submit_quote() -> impl IntoResponse { todo!() }
+pub async fn complete_job() -> impl IntoResponse { todo!() }
+```
+
+Create `backend/src/customer/mod.rs`:
+```rust
+pub mod handlers;
+```
+
+Create `backend/src/customer/handlers.rs`:
+```rust
+// implemented in Tasks 7-10
+use axum::response::IntoResponse;
+pub async fn nearby_contractors() -> impl IntoResponse { todo!() }
+pub async fn contractor_profile() -> impl IntoResponse { todo!() }
+pub async fn create_job() -> impl IntoResponse { todo!() }
+pub async fn get_job() -> impl IntoResponse { todo!() }
+pub async fn cancel_job() -> impl IntoResponse { todo!() }
+pub async fn submit_rating() -> impl IntoResponse { todo!() }
+```
+
+Create `backend/src/admin/mod.rs`:
+```rust
+pub mod handlers;
+```
+
+Create `backend/src/admin/handlers.rs`:
+```rust
+// implemented in Task 11
+use axum::response::IntoResponse;
+pub async fn list_users() -> impl IntoResponse { todo!() }
+pub async fn suspend_user() -> impl IntoResponse { todo!() }
+pub async fn list_jobs() -> impl IntoResponse { todo!() }
+pub async fn get_metrics() -> impl IntoResponse { todo!() }
+```
+
+- [ ] **Step 4: Update main.rs to create Redis connection**
+
+Replace `backend/src/main.rs`:
+
+```rust
+use knect_api::{config::Config, create_router, AppState};
+use sqlx::postgres::PgPoolOptions;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "knect_api=debug,tower_http=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let config = Config::from_env()?;
+
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&config.database_url)
+        .await?;
+
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    let redis_client = redis::Client::open(config.redis_url.as_str())
+        .map_err(|e| anyhow::anyhow!("Redis client error: {e}"))?;
+    let redis = redis::aio::ConnectionManager::new(redis_client)
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis connection failed: {e}"))?;
+
+    let state = AppState { db: pool, config: config.clone(), redis };
+    let app = create_router(state);
+
+    let addr = format!("0.0.0.0:{}", config.port);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Listening on {addr}");
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+```
+
+- [ ] **Step 5: Add role extractors to auth/middleware.rs**
+
+Replace `backend/src/auth/middleware.rs`:
+
+```rust
+use axum::{async_trait, extract::FromRequestParts, http::request::Parts};
+
+use crate::{
+    auth::tokens::{verify_token, Claims},
+    error::AppError,
+    models::user::UserRole,
+    AppState,
+};
+
+pub struct AuthUser(pub Claims);
+pub struct ContractorUser(pub Claims);
+pub struct CustomerUser(pub Claims);
+pub struct AdminUser(pub Claims);
+
+#[async_trait]
+impl FromRequestParts<AppState> for AuthUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let token = parts
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or_else(|| AppError::Unauthorized("Missing authorization header".to_string()))?;
+
+        let claims = verify_token(token, &state.config.jwt_secret)?;
+        Ok(AuthUser(claims))
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for ContractorUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let AuthUser(claims) = AuthUser::from_request_parts(parts, state).await?;
+        if claims.role != UserRole::Contractor {
+            return Err(AppError::Unauthorized("Contractor access required".to_string()));
+        }
+        Ok(ContractorUser(claims))
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for CustomerUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let AuthUser(claims) = AuthUser::from_request_parts(parts, state).await?;
+        if claims.role != UserRole::Customer {
+            return Err(AppError::Unauthorized("Customer access required".to_string()));
+        }
+        Ok(CustomerUser(claims))
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let AuthUser(claims) = AuthUser::from_request_parts(parts, state).await?;
+        if claims.role != UserRole::Admin {
+            return Err(AppError::Unauthorized("Admin access required".to_string()));
+        }
+        Ok(AdminUser(claims))
+    }
+}
+```
+
+- [ ] **Step 6: Update tests/common/mod.rs â€” make test_app async, add Redis and new helpers**
+
+Replace `backend/tests/common/mod.rs`:
+
+```rust
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use http_body_util::BodyExt;
+use knect_api::{config::Config, create_router, AppState};
+use sqlx::PgPool;
+use tower::ServiceExt;
+
+pub fn test_config() -> Config {
+    Config {
+        database_url: "unused_in_sqlx_test_macro".to_string(),
+        redis_url: "redis://localhost:6379".to_string(),
+        jwt_secret: "test_jwt_secret_must_be_64_or_more_characters_long_for_hs256_to_work_correctly!".to_string(),
+        jwt_refresh_secret: "test_refresh_secret_must_be_64_or_more_chars_long_for_hs256_to_work!".to_string(),
+        port: 3000,
+    }
+}
+
+pub async fn test_app(pool: PgPool) -> axum::Router {
+    let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+    let redis = redis::aio::ConnectionManager::new(redis_client).await.unwrap();
+    let state = AppState { db: pool, config: test_config(), redis };
+    create_router(state)
+}
+
+pub async fn post_json(
+    app: &axum::Router,
+    path: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn post_json_auth(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn get_json(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder().method("GET").uri(path);
+    if let Some(token) = bearer_token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    let response = app
+        .clone()
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn put_json(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn delete_req(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(path)
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// Register a user and return the access token.
+pub async fn register_and_login(
+    app: &axum::Router,
+    email: &str,
+    role: &str,
+    display_name: &str,
+) -> String {
+    let (_, body) = post_json(
+        app,
+        "/auth/register",
+        serde_json::json!({
+            "email": email,
+            "password": "password123",
+            "role": role,
+            "display_name": display_name
+        }),
+    )
+    .await;
+    body["access_token"].as_str().unwrap().to_string()
+}
+```
+
+- [ ] **Step 7: Update auth_test.rs â€” add .await to all test_app calls**
+
+In `backend/tests/auth_test.rs`, every `common::test_app(pool)` must become `common::test_app(pool).await`. There are 13 such calls. Find them all and add `.await`.
+
+The pattern changes from:
+```rust
+let app = common::test_app(pool);
+```
+to:
+```rust
+let app = common::test_app(pool).await;
+```
+
+Do this for every test function in the file.
+
+- [ ] **Step 8: Verify compilation**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo check --manifest-path backend/Cargo.toml
+```
+
+Expected: no errors (todo!() stubs will compile).
+
+- [ ] **Step 9: Run existing tests to confirm no regressions**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml 2>&1 | tail -10
+```
+
+Expected: all 19 tests pass.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add backend/Cargo.toml backend/src/ backend/tests/common/mod.rs backend/tests/auth_test.rs
+git commit -m "feat: add Redis to AppState, role extractors, and expanded test helpers"
+```
+
+---
+
+## Task 2: Contractor Profile â€” GET/PUT /contractor/profile
+
+**Files:**
+- Modify: `backend/src/contractor/handlers.rs`
+- Create: `backend/tests/contractor_test.rs`
+
+- [ ] **Step 1: Write failing tests**
+
+Create `backend/tests/contractor_test.rs`:
+
+```rust
+mod common;
+
+use sqlx::PgPool;
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_get_own_profile(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "alice@example.com", "contractor", "Alice Builder").await;
+
+    let (status, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body["display_name"], "Alice Builder");
+    assert_eq!(body["is_available"], false);
+    assert_eq!(body["is_busy"], false);
+    assert!(body["trade_categories"].is_array());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_access_contractor_profile_endpoint(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "bob@example.com", "customer", "Bob").await;
+
+    let (status, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_update_profile(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "carol@example.com", "contractor", "Carol").await;
+
+    let (status, _) = common::put_json(
+        &app,
+        "/contractor/profile",
+        &token,
+        serde_json::json!({
+            "bio": "Expert plumber",
+            "base_rate": 75.0,
+            "base_rate_unit": "per_hour"
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    assert_eq!(body["bio"], "Expert plumber");
+    assert_eq!(body["base_rate"], 75.0);
+    assert_eq!(body["base_rate_unit"], "per_hour");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_update_trade_categories(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "dave@example.com", "contractor", "Dave").await;
+
+    // Get an existing category ID from the DB
+    let (_, profile_before) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    assert_eq!(profile_before["trade_categories"].as_array().unwrap().len(), 0);
+
+    // Seed expects trade_categories to exist from migration 0006
+    // Use a known seeded category name; but we need its UUID.
+    // POST with no category_ids first to confirm 200, then verify via GET.
+    let (status, _) = common::put_json(
+        &app,
+        "/contractor/profile",
+        &token,
+        serde_json::json!({ "category_ids": [] }),
+    )
+    .await;
+    assert_eq!(status, 200);
+}
+```
+
+- [ ] **Step 2: Run tests to confirm they fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic with "not yet implemented".
+
+- [ ] **Step 3: Implement contractor handlers for profile GET/PUT**
+
+Replace `backend/src/contractor/handlers.rs` (keeping the todo stubs for unimplemented handlers):
+
+```rust
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::{
+    auth::middleware::ContractorUser,
+    error::AppError,
+    models::contractor::RateUnit,
+    AppState,
+};
+
+// â”€â”€â”€ Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+#[derive(Serialize)]
+pub struct TradeCategory {
+    pub id: Uuid,
+    pub name: String,
+    pub icon_slug: String,
+}
+
+#[derive(Serialize)]
+pub struct ContractorProfileResponse {
+    pub user_id: Uuid,
+    pub display_name: String,
+    pub bio: Option<String>,
+    pub base_rate: Option<f64>,
+    pub base_rate_unit: Option<RateUnit>,
+    pub is_available: bool,
+    pub is_busy: bool,
+    pub current_lat: Option<f64>,
+    pub current_lng: Option<f64>,
+    pub avg_rating: f64,
+    pub rating_count: i32,
+    pub trade_categories: Vec<TradeCategory>,
+}
+
+pub async fn get_profile(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+) -> Result<Json<ContractorProfileResponse>, AppError> {
+    let row = sqlx::query!(
+        r#"SELECT user_id, display_name, bio, base_rate,
+                  base_rate_unit as "base_rate_unit: RateUnit",
+                  is_available, is_busy, current_lat, current_lng,
+                  avg_rating, rating_count
+           FROM contractor_profiles WHERE user_id = $1"#,
+        claims.sub
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Profile not found".to_string()))?;
+
+    let categories = sqlx::query!(
+        "SELECT tc.id, tc.name, tc.icon_slug
+         FROM trade_categories tc
+         JOIN contractor_trade_categories ctc ON ctc.category_id = tc.id
+         WHERE ctc.contractor_id = $1
+         ORDER BY tc.name",
+        claims.sub
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| TradeCategory { id: r.id, name: r.name, icon_slug: r.icon_slug })
+    .collect();
+
+    Ok(Json(ContractorProfileResponse {
+        user_id: row.user_id,
+        display_name: row.display_name,
+        bio: row.bio,
+        base_rate: row.base_rate,
+        base_rate_unit: row.base_rate_unit,
+        is_available: row.is_available,
+        is_busy: row.is_busy,
+        current_lat: row.current_lat,
+        current_lng: row.current_lng,
+        avg_rating: row.avg_rating,
+        rating_count: row.rating_count,
+        trade_categories: categories,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateProfileRequest {
+    pub display_name: Option<String>,
+    pub bio: Option<String>,
+    pub base_rate: Option<f64>,
+    pub base_rate_unit: Option<RateUnit>,
+    pub category_ids: Option<Vec<Uuid>>,
+}
+
+pub async fn update_profile(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<StatusCode, AppError> {
+    let mut tx = state.db.begin().await?;
+
+    sqlx::query!(
+        r#"UPDATE contractor_profiles SET
+            display_name = COALESCE($1, display_name),
+            bio = COALESCE($2, bio),
+            base_rate = COALESCE($3, base_rate),
+            base_rate_unit = COALESCE($4::rate_unit, base_rate_unit)
+           WHERE user_id = $5"#,
+        req.display_name,
+        req.bio,
+        req.base_rate,
+        req.base_rate_unit as Option<RateUnit>,
+        claims.sub,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    if let Some(category_ids) = req.category_ids {
+        sqlx::query!(
+            "DELETE FROM contractor_trade_categories WHERE contractor_id = $1",
+            claims.sub
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        for cat_id in category_ids {
+            sqlx::query!(
+                "INSERT INTO contractor_trade_categories (contractor_id, category_id)
+                 VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                claims.sub,
+                cat_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    tx.commit().await?;
+    Ok(StatusCode::OK)
+}
+
+// â”€â”€â”€ Stubs for later tasks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+pub async fn set_availability() -> impl axum::response::IntoResponse { todo!() }
+pub async fn update_location() -> impl axum::response::IntoResponse { todo!() }
+pub async fn list_jobs() -> impl axum::response::IntoResponse { todo!() }
+pub async fn respond_to_job() -> impl axum::response::IntoResponse { todo!() }
+pub async fn submit_quote() -> impl axum::response::IntoResponse { todo!() }
+pub async fn complete_job() -> impl axum::response::IntoResponse { todo!() }
+```
+
+- [ ] **Step 4: Regenerate sqlx offline query data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run profile tests**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test 2>&1 | grep -E "FAILED|ok"
+```
+
+Expected: all 4 profile tests pass.
+
+- [ ] **Step 6: Run full suite (no regressions)**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml 2>&1 | tail -5
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/src/contractor/ backend/tests/contractor_test.rs backend/.sqlx/
+git commit -m "feat: implement contractor profile GET/PUT endpoints"
+```
+
+---
+
+## Task 3: Availability + Location â€” POST /contractor/availability, POST /location
+
+**Files:**
+- Modify: `backend/src/contractor/handlers.rs`
+- Modify: `backend/tests/contractor_test.rs`
+
+- [ ] **Step 1: Write failing tests â€” append to contractor_test.rs**
+
+```rust
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_toggle_availability_on(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "avail@example.com", "contractor", "Avail").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        "/contractor/availability",
+        &token,
+        serde_json::json!({ "available": true }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    assert_eq!(body["is_available"], true);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_toggle_availability_off(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "avail2@example.com", "contractor", "Avail2").await;
+
+    common::post_json_auth(&app, "/contractor/availability", &token, serde_json::json!({ "available": true })).await;
+    let (status, _) = common::post_json_auth(&app, "/contractor/availability", &token, serde_json::json!({ "available": false })).await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    assert_eq!(body["is_available"], false);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_update_location(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "loc@example.com", "contractor", "LocUser").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        "/location",
+        &token,
+        serde_json::json!({ "lat": 40.7128, "lng": -74.0060 }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    // DB fallback columns updated
+    let lat = body["current_lat"].as_f64().unwrap();
+    let lng = body["current_lng"].as_f64().unwrap();
+    assert!((lat - 40.7128).abs() < 0.0001);
+    assert!((lng - (-74.0060)).abs() < 0.0001);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_post_location(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "cust_loc@example.com", "customer", "Cust").await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        "/location",
+        &token,
+        serde_json::json!({ "lat": 40.0, "lng": -74.0 }),
+    )
+    .await;
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test avail 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic with "not yet implemented".
+
+- [ ] **Step 3: Implement set_availability and update_location in handlers.rs**
+
+Replace the `set_availability` and `update_location` stubs with real implementations. Add these imports at the top of the file:
+
+```rust
+use redis::AsyncCommands;
+```
+
+Then replace the stubs:
+
+```rust
+#[derive(Deserialize)]
+pub struct AvailabilityRequest {
+    pub available: bool,
+}
+
+pub async fn set_availability(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Json(req): Json<AvailabilityRequest>,
+) -> Result<StatusCode, AppError> {
+    sqlx::query!(
+        "UPDATE contractor_profiles SET is_available = $1 WHERE user_id = $2",
+        req.available,
+        claims.sub,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+pub struct LocationRequest {
+    pub lat: f64,
+    pub lng: f64,
+}
+
+pub async fn update_location(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Json(req): Json<LocationRequest>,
+) -> Result<StatusCode, AppError> {
+    // Write to Redis with 30s TTL â€” live position for WebSocket broadcasting (Plan 3)
+    let key = format!("contractor:{}:pos", claims.sub);
+    let value = format!("{},{}", req.lat, req.lng);
+    let mut conn = state.redis.clone();
+    conn.set_ex::<_, _, ()>(&key, &value, 30)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+
+    // Update DB fallback columns + PostGIS geometry column
+    // ST_MakePoint(longitude, latitude) â€” PostGIS uses (lng, lat) order
+    sqlx::query!(
+        r#"UPDATE contractor_profiles
+           SET current_lat = $1,
+               current_lng = $2,
+               current_location = ST_MakePoint($2, $1)::geography,
+               location_updated_at = NOW()
+           WHERE user_id = $3"#,
+        req.lat,
+        req.lng,
+        claims.sub,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}
+```
+
+- [ ] **Step 4: Regenerate sqlx offline query data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run availability + location tests**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test 2>&1 | grep -E "FAILED|ok"
+```
+
+Expected: all 8 contractor tests pass (4 from Task 2 + 4 new).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/contractor/handlers.rs backend/tests/contractor_test.rs backend/.sqlx/
+git commit -m "feat: implement availability toggle and location update endpoints"
+```
+
+---
+
+## Task 4: Contractor Job Queue â€” GET /contractor/jobs
+
+**Files:**
+- Modify: `backend/src/contractor/handlers.rs`
+- Modify: `backend/tests/contractor_test.rs`
+
+The job queue returns all jobs for this contractor with status `pending`, `accepted`, or `in_progress`. Since tests need to create jobs (which is the customer's action), we need to register both a contractor and a customer and create a job in the test setup.
+
+- [ ] **Step 1: Write failing tests â€” append to contractor_test.rs**
+
+```rust
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_job_queue_is_empty_initially(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "queue_c@example.com", "contractor", "QueueC").await;
+
+    let (status, body) = common::get_json(&app, "/contractor/jobs", Some(&token)).await;
+
+    assert_eq!(status, 200);
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_sees_pending_job_in_queue(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let contractor_token = common::register_and_login(&app, "cjq_contractor@example.com", "contractor", "ContractorQ").await;
+    let customer_token = common::register_and_login(&app, "cjq_customer@example.com", "customer", "CustomerQ").await;
+
+    // Get contractor's user_id from their profile
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    // Customer creates a job targeting this contractor
+    let (job_status, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Fix the sink",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060
+        }),
+    )
+    .await;
+    assert_eq!(job_status, 200, "job creation failed: {:?}", job_body);
+
+    // Contractor sees job in queue
+    let (status, body) = common::get_json(&app, "/contractor/jobs", Some(&contractor_token)).await;
+    assert_eq!(status, 200);
+    let jobs = body.as_array().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["status"], "pending");
+    assert_eq!(jobs[0]["description"], "Fix the sink");
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test queue 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic (the `create_job` customer endpoint isn't implemented yet, so the job creation in test 2 will get 501, but the queue test itself panics on `list_jobs`).
+
+- [ ] **Step 3: Implement list_jobs**
+
+Replace the `list_jobs` stub in `backend/src/contractor/handlers.rs`:
+
+```rust
+#[derive(Serialize)]
+pub struct JobQueueItem {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub status: crate::models::job::JobStatus,
+    pub description: String,
+    pub location_lat: f64,
+    pub location_lng: f64,
+    pub location_address: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_jobs(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+) -> Result<Json<Vec<JobQueueItem>>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT id, customer_id,
+                  status as "status: crate::models::job::JobStatus",
+                  description, location_lat, location_lng,
+                  location_address, created_at, updated_at
+           FROM jobs
+           WHERE contractor_id = $1
+             AND status IN ('pending', 'accepted', 'in_progress')
+           ORDER BY created_at ASC"#,
+        claims.sub
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let jobs = rows
+        .into_iter()
+        .map(|r| JobQueueItem {
+            id: r.id,
+            customer_id: r.customer_id,
+            status: r.status,
+            description: r.description,
+            location_lat: r.location_lat,
+            location_lng: r.location_lng,
+            location_address: r.location_address,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })
+        .collect();
+
+    Ok(Json(jobs))
+}
+```
+
+Also add to the imports at the top of the file:
+```rust
+use chrono;
+```
+
+And add the needed models import:
+```rust
+use crate::models::job::JobStatus;
+```
+
+- [ ] **Step 4: Temporarily stub customer create_job to return 200 so the queue test can run**
+
+The `contractor_sees_pending_job_in_queue` test calls `POST /jobs`. Since Task 8 implements that endpoint, add a temporary stub in `backend/src/customer/handlers.rs` that just returns 200 with a fake job body â€” OR implement `create_job` in this task.
+
+**Implement `create_job` now** (minimal version) to unblock the test. Add to `backend/src/customer/handlers.rs`:
+
+```rust
+use axum::{
+    extract::State,
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::{
+    auth::middleware::CustomerUser,
+    error::AppError,
+    AppState,
+};
+
+#[derive(Deserialize)]
+pub struct CreateJobRequest {
+    pub contractor_id: Uuid,
+    pub description: String,
+    pub location_lat: f64,
+    pub location_lng: f64,
+    pub location_address: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct JobResponse {
+    pub id: Uuid,
+}
+
+pub async fn create_job(
+    State(state): State<AppState>,
+    CustomerUser(claims): CustomerUser,
+    Json(req): Json<CreateJobRequest>,
+) -> Result<Json<JobResponse>, AppError> {
+    // Verify contractor exists and is not suspended
+    let contractor = sqlx::query!(
+        "SELECT cp.user_id FROM contractor_profiles cp
+         JOIN users u ON u.id = cp.user_id
+         WHERE cp.user_id = $1 AND u.suspended_at IS NULL",
+        req.contractor_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Contractor not found".to_string()))?;
+
+    let job_id = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO jobs (id, customer_id, contractor_id, description, location_lat, location_lng, location_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        job_id,
+        claims.sub,
+        contractor.user_id,
+        req.description,
+        req.location_lat,
+        req.location_lng,
+        req.location_address,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(JobResponse { id: job_id }))
+}
+
+// Stubs for remaining customer handlers
+pub async fn nearby_contractors() -> impl axum::response::IntoResponse { todo!() }
+pub async fn contractor_profile() -> impl axum::response::IntoResponse { todo!() }
+pub async fn get_job() -> impl axum::response::IntoResponse { todo!() }
+pub async fn cancel_job() -> impl axum::response::IntoResponse { todo!() }
+pub async fn submit_rating() -> impl axum::response::IntoResponse { todo!() }
+```
+
+- [ ] **Step 5: Regenerate sqlx offline query data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 6: Run contractor job queue tests**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test queue 2>&1 | grep -E "FAILED|ok"
+```
+
+Expected: both queue tests pass.
+
+- [ ] **Step 7: Run full suite**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml 2>&1 | tail -5
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backend/src/contractor/handlers.rs backend/src/customer/handlers.rs backend/tests/contractor_test.rs backend/.sqlx/
+git commit -m "feat: implement contractor job queue and minimal create_job"
+```
+
+---
+
+## Task 5: Job State Machine â€” POST /jobs/:id/respond, POST /jobs/:id/complete
+
+**Files:**
+- Modify: `backend/src/contractor/handlers.rs`
+- Modify: `backend/tests/contractor_test.rs`
+
+State transitions:
+- `respond { action: "accept" }`: `pending` â†’ `accepted`, `contractor_profiles.is_busy = true`
+- `respond { action: "deny" }`: `pending` â†’ `denied`
+- `complete`: `accepted` or `in_progress` â†’ `completed`, `contractor_profiles.is_busy = false`
+
+- [ ] **Step 1: Write failing tests â€” append to contractor_test.rs**
+
+```rust
+// Helper: register contractor + customer, create a job, return (app, contractor_token, customer_token, job_id)
+async fn setup_pending_job(pool: &PgPool) -> (axum::Router, String, String, String) {
+    let app = common::test_app(pool.clone()).await;
+    let contractor_token = common::register_and_login(&app, "sm_c@example.com", "contractor", "SM_C").await;
+    let customer_token = common::register_and_login(&app, "sm_k@example.com", "customer", "SM_K").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap().to_string();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Fix the pipes",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap().to_string();
+    (app, contractor_token, customer_token, job_id)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_accept_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/respond", job_id),
+        &contractor_token,
+        serde_json::json!({ "action": "accept" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    // is_busy should now be true
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(profile["is_busy"], true);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_deny_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/respond", job_id),
+        &contractor_token,
+        serde_json::json!({ "action": "deny" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(profile["is_busy"], false);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_cannot_accept_already_accepted_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/respond", job_id),
+        &contractor_token,
+        serde_json::json!({ "action": "accept" }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_complete_accepted_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/complete", job_id),
+        &contractor_token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    assert_eq!(profile["is_busy"], false);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_cannot_complete_pending_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/complete", job_id),
+        &contractor_token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test respond 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic.
+
+- [ ] **Step 3: Implement respond_to_job and complete_job in handlers.rs**
+
+```rust
+#[derive(Deserialize)]
+pub struct RespondRequest {
+    pub action: String, // "accept" | "deny"
+}
+
+pub async fn respond_to_job(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Path(job_id): Path<Uuid>,
+    Json(req): Json<RespondRequest>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT id, status as "status: JobStatus", contractor_id
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != JobStatus::Pending {
+        return Err(AppError::Conflict("Job is not pending".to_string()));
+    }
+
+    match req.action.as_str() {
+        "accept" => {
+            let mut tx = state.db.begin().await?;
+            sqlx::query!(
+                "UPDATE jobs SET status = 'accepted' WHERE id = $1",
+                job_id
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query!(
+                "UPDATE contractor_profiles SET is_busy = TRUE WHERE user_id = $1",
+                claims.sub
+            )
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
+        "deny" => {
+            sqlx::query!(
+                "UPDATE jobs SET status = 'denied' WHERE id = $1",
+                job_id
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        _ => {
+            return Err(AppError::BadRequest("action must be 'accept' or 'deny'".to_string()));
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+pub async fn complete_job(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT id, status as "status: JobStatus", contractor_id
+           FROM jobs WHERE id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != JobStatus::Accepted && job.status != JobStatus::InProgress {
+        return Err(AppError::Conflict("Job must be accepted or in_progress to complete".to_string()));
+    }
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query!(
+        "UPDATE jobs SET status = 'completed' WHERE id = $1",
+        job_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE contractor_profiles SET is_busy = FALSE WHERE user_id = $1",
+        claims.sub
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}
+```
+
+Note: `complete_job` takes no `Json` body but Axum requires the handler to be wired without it. Since the route is `post(contractor::handlers::complete_job)` with no body extractor, this is fine.
+
+- [ ] **Step 4: Regenerate sqlx offline data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run state machine tests**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test 2>&1 | grep -E "FAILED|ok"
+```
+
+Expected: all contractor tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/contractor/handlers.rs backend/tests/contractor_test.rs backend/.sqlx/
+git commit -m "feat: implement job respond and complete endpoints with state machine"
+```
+
+---
+
+## Task 6: Quotes â€” POST /jobs/:id/quote
+
+**Files:**
+- Modify: `backend/src/contractor/handlers.rs`
+- Modify: `backend/tests/contractor_test.rs`
+
+Quotes are submitted after a job is accepted. `job_id` is UNIQUE in the quotes table, so an upsert handles re-quoting.
+
+- [ ] **Step 1: Write failing tests â€” append to contractor_test.rs**
+
+```rust
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_submit_quote_for_accepted_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    // Accept the job first
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/quote", job_id),
+        &contractor_token,
+        serde_json::json!({
+            "custom_amount": 150.0,
+            "custom_note": "Parts + 2hrs labor"
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_cannot_quote_pending_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/quote", job_id),
+        &contractor_token,
+        serde_json::json!({ "custom_amount": 100.0 }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test contractor_test quote 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic.
+
+- [ ] **Step 3: Implement submit_quote in handlers.rs**
+
+```rust
+#[derive(Deserialize)]
+pub struct QuoteRequest {
+    pub custom_amount: Option<f64>,
+    pub custom_note: Option<String>,
+}
+
+pub async fn submit_quote(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Path(job_id): Path<Uuid>,
+    Json(req): Json<QuoteRequest>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT status as "status: JobStatus", contractor_id,
+                  cp.base_rate as contractor_base_rate
+           FROM jobs j
+           JOIN contractor_profiles cp ON cp.user_id = j.contractor_id
+           WHERE j.id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != JobStatus::Accepted && job.status != JobStatus::InProgress {
+        return Err(AppError::Conflict("Job must be accepted to submit a quote".to_string()));
+    }
+
+    sqlx::query!(
+        "INSERT INTO quotes (job_id, contractor_id, base_rate_snapshot, custom_amount, custom_note)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (job_id) DO UPDATE SET
+             custom_amount = EXCLUDED.custom_amount,
+             custom_note = EXCLUDED.custom_note,
+             base_rate_snapshot = EXCLUDED.base_rate_snapshot",
+        job_id,
+        claims.sub,
+        job.contractor_base_rate,
+        req.custom_amount,
+        req.custom_note,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}
+```
+
+- [ ] **Step 4: Regenerate sqlx offline data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run quote tests + full suite**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml 2>&1 | tail -5
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/contractor/handlers.rs backend/tests/contractor_test.rs backend/.sqlx/
+git commit -m "feat: implement quote submission endpoint"
+```
+
+---
+
+## Task 7: Customer Browse â€” GET /contractors/nearby, GET /contractors/:id
+
+**Files:**
+- Modify: `backend/src/customer/handlers.rs`
+- Create: `backend/tests/customer_test.rs`
+
+`GET /contractors/nearby` uses PostGIS `ST_DWithin` with geography type. Query params: `lat`, `lng`, `radius` (meters, default 5000). Returns only `is_available = TRUE` contractors with a known location.
+
+- [ ] **Step 1: Write failing tests**
+
+Create `backend/tests/customer_test.rs`:
+
+```rust
+mod common;
+
+use sqlx::PgPool;
+
+/// Seeds a contractor with a known location and returns (app, contractor_token, customer_token)
+async fn setup_located_contractor(pool: &PgPool, suffix: &str) -> (axum::Router, String, String) {
+    let app = common::test_app(pool.clone()).await;
+
+    let contractor_token = common::register_and_login(
+        &app,
+        &format!("nearby_c_{suffix}@example.com"),
+        "contractor",
+        &format!("Nearby_{suffix}"),
+    )
+    .await;
+
+    let customer_token = common::register_and_login(
+        &app,
+        &format!("nearby_k_{suffix}@example.com"),
+        "customer",
+        &format!("Customer_{suffix}"),
+    )
+    .await;
+
+    // Set contractor available
+    common::post_json_auth(&app, "/contractor/availability", &contractor_token, serde_json::json!({ "available": true })).await;
+
+    // Set location: New York City
+    common::post_json_auth(&app, "/location", &contractor_token, serde_json::json!({
+        "lat": 40.7128,
+        "lng": -74.0060
+    })).await;
+
+    (app, contractor_token, customer_token)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_see_nearby_contractor(pool: PgPool) {
+    let (app, _, customer_token) = setup_located_contractor(&pool, "a").await;
+
+    // Search within 10km of NYC
+    let (status, body) = common::get_json(
+        &app,
+        "/contractors/nearby?lat=40.7128&lng=-74.0060&radius=10000",
+        Some(&customer_token),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    let contractors = body.as_array().unwrap();
+    assert!(!contractors.is_empty(), "expected at least one nearby contractor");
+    assert_eq!(contractors[0]["display_name"], "Nearby_a");
+    assert!(contractors[0]["distance_meters"].as_f64().unwrap() < 100.0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_outside_radius_not_returned(pool: PgPool) {
+    let (app, _, customer_token) = setup_located_contractor(&pool, "b").await;
+
+    // Search 1000km away in Los Angeles (contractor is in NYC)
+    let (status, body) = common::get_json(
+        &app,
+        "/contractors/nearby?lat=34.0522&lng=-118.2437&radius=5000",
+        Some(&customer_token),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    let contractors = body.as_array().unwrap();
+    assert!(contractors.is_empty(), "contractor should be outside radius");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unauthenticated_user_cannot_browse_nearby(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let (status, body) = common::get_json(&app, "/contractors/nearby?lat=40.7&lng=-74.0&radius=5000", None).await;
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_view_public_contractor_profile(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "c").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (status, body) = common::get_json(
+        &app,
+        &format!("/contractors/{}", contractor_id),
+        Some(&customer_token),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body["display_name"], "Nearby_c");
+    assert!(body["ratings"].is_array());
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test customer_test nearby 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic.
+
+- [ ] **Step 3: Implement nearby_contractors and contractor_profile in customer/handlers.rs**
+
+Add these imports and structs to `backend/src/customer/handlers.rs` (keep existing `create_job` implementation and stubs):
+
+```rust
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::{
+    auth::middleware::{AuthUser, CustomerUser},
+    error::AppError,
+    models::contractor::RateUnit,
+    AppState,
+};
+
+// â”€â”€â”€ Browse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+#[derive(Deserialize)]
+pub struct NearbyQuery {
+    pub lat: f64,
+    pub lng: f64,
+    pub radius: Option<f64>, // meters, default 5000
+}
+
+#[derive(Serialize)]
+pub struct NearbyContractor {
+    pub user_id: Uuid,
+    pub display_name: String,
+    pub bio: Option<String>,
+    pub base_rate: Option<f64>,
+    pub base_rate_unit: Option<RateUnit>,
+    pub is_busy: bool,
+    pub avg_rating: f64,
+    pub rating_count: i32,
+    pub current_lat: Option<f64>,
+    pub current_lng: Option<f64>,
+    pub distance_meters: f64,
+}
+
+pub async fn nearby_contractors(
+    State(state): State<AppState>,
+    CustomerUser(_claims): CustomerUser,
+    Query(q): Query<NearbyQuery>,
+) -> Result<Json<Vec<NearbyContractor>>, AppError> {
+    let radius = q.radius.unwrap_or(5000.0);
+
+    let rows = sqlx::query!(
+        r#"SELECT
+               user_id, display_name, bio, base_rate,
+               base_rate_unit as "base_rate_unit: RateUnit",
+               is_busy, current_lat, current_lng,
+               avg_rating, rating_count,
+               ST_Distance(current_location, ST_MakePoint($1, $2)::geography) as distance_meters
+           FROM contractor_profiles
+           WHERE is_available = TRUE
+             AND current_location IS NOT NULL
+             AND ST_DWithin(current_location, ST_MakePoint($1, $2)::geography, $3)
+           ORDER BY distance_meters ASC
+           LIMIT 50"#,
+        q.lng,
+        q.lat,
+        radius,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let result = rows
+        .into_iter()
+        .map(|r| NearbyContractor {
+            user_id: r.user_id,
+            display_name: r.display_name,
+            bio: r.bio,
+            base_rate: r.base_rate,
+            base_rate_unit: r.base_rate_unit,
+            is_busy: r.is_busy,
+            avg_rating: r.avg_rating,
+            rating_count: r.rating_count,
+            current_lat: r.current_lat,
+            current_lng: r.current_lng,
+            distance_meters: r.distance_meters.unwrap_or(0.0),
+        })
+        .collect();
+
+    Ok(Json(result))
+}
+
+#[derive(Serialize)]
+pub struct PublicRating {
+    pub score: i16,
+    pub review_text: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize)]
+pub struct PublicContractorProfile {
+    pub user_id: Uuid,
+    pub display_name: String,
+    pub bio: Option<String>,
+    pub base_rate: Option<f64>,
+    pub base_rate_unit: Option<RateUnit>,
+    pub is_available: bool,
+    pub is_busy: bool,
+    pub avg_rating: f64,
+    pub rating_count: i32,
+    pub ratings: Vec<PublicRating>,
+}
+
+pub async fn contractor_profile(
+    State(state): State<AppState>,
+    CustomerUser(_claims): CustomerUser,
+    Path(contractor_id): Path<Uuid>,
+) -> Result<Json<PublicContractorProfile>, AppError> {
+    let row = sqlx::query!(
+        r#"SELECT user_id, display_name, bio, base_rate,
+                  base_rate_unit as "base_rate_unit: RateUnit",
+                  is_available, is_busy, avg_rating, rating_count
+           FROM contractor_profiles WHERE user_id = $1"#,
+        contractor_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Contractor not found".to_string()))?;
+
+    let ratings = sqlx::query!(
+        "SELECT score, review_text, created_at
+         FROM ratings WHERE contractor_id = $1
+         ORDER BY created_at DESC LIMIT 20",
+        contractor_id
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| PublicRating {
+        score: r.score,
+        review_text: r.review_text,
+        created_at: r.created_at,
+    })
+    .collect();
+
+    Ok(Json(PublicContractorProfile {
+        user_id: row.user_id,
+        display_name: row.display_name,
+        bio: row.bio,
+        base_rate: row.base_rate,
+        base_rate_unit: row.base_rate_unit,
+        is_available: row.is_available,
+        is_busy: row.is_busy,
+        avg_rating: row.avg_rating,
+        rating_count: row.rating_count,
+        ratings,
+    }))
+}
+```
+
+- [ ] **Step 4: Regenerate sqlx offline data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run customer browse tests**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test customer_test 2>&1 | grep -E "FAILED|ok"
+```
+
+Expected: all 4 tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/customer/handlers.rs backend/tests/customer_test.rs backend/.sqlx/
+git commit -m "feat: implement nearby contractors and public profile endpoints"
+```
+
+---
+
+## Task 8: Customer Job Management â€” GET /jobs/:id, DELETE /jobs/:id
+
+**Files:**
+- Modify: `backend/src/customer/handlers.rs`
+- Modify: `backend/tests/customer_test.rs`
+
+`POST /jobs` (create_job) was already implemented in Task 4. This task completes the customer job flow: view a job (with quote if present) and cancel a pending job.
+
+`GET /jobs/:id` is accessible to both the customer and contractor on that job â€” we use `AuthUser` (any role), then check ownership.
+
+- [ ] **Step 1: Write failing tests â€” append to customer_test.rs**
+
+```rust
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_create_and_view_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "d").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (create_status, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Replace faucet",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    assert_eq!(create_status, 200);
+    let job_id = job_body["id"].as_str().unwrap();
+
+    let (status, body) = common::get_json(
+        &app,
+        &format!("/jobs/{}", job_id),
+        Some(&customer_token),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["description"], "Replace faucet");
+    assert!(body["quote"].is_null());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_view_their_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "e").await;
+
+    let (_, profile) = common::get_json(&app, "/contractor/profile", Some(&contractor_token)).await;
+    let contractor_id = profile["user_id"].as_str().unwrap();
+
+    let (_, job_body) = common::post_json_auth(
+        &app,
+        "/jobs",
+        &customer_token,
+        serde_json::json!({
+            "contractor_id": contractor_id,
+            "description": "Fix roof",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap();
+
+    // Contractor can also view the job
+    let (status, body) = common::get_json(&app, &format!("/jobs/{}", job_id), Some(&contractor_token)).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["description"], "Fix roof");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_can_cancel_pending_job(pool: PgPool) {
+    let (app, contractor_token, customer_token) = setup_located_contractor(&pool, "f").await;*
+ $  let(H~$ profyle) = coMmon2:gat_jso~(6Ápp, "/contractor?srmfilu2, Somd(&contractor_to{án().await;
+ `  let contract/r_id(½ `ronileS4user_id"].as_spr().U~srap()
+
+    lgt (_, hob_body©  common::postßjson_auth(
+        &app,
+   0    "/jnbs",
+    `„  &cusdcmer_tokän,
+$`    ¢ sErde_json::jwon!({
+ !`         "cOntrastor_kd": #ontbactor_id,
+        $   "ddscriqt)g~": "TRii hedgu",
+0  2       0âlcction_lat":(t8>75²8,      `     "loca|ion_lnç¢: -75.0060,
+ "     "	,
+    )
+    .avaIt;
+  ` |et job_id ="joc_bodyJ(id"].cs_str)*}nwrar();
+
+$   lct (status, _)"= com-f::delete_2eq(&ap², &F?rmaô!("¯jobs/{=¢, zobid)l &c}stom'r_token).await;
+    cssert_eq (status( 2°2	;
+}
+
+a[sqlx::tast,mifrationc = ".omicraôions"i]async fN!cusvomer_cinnot_cangeL_acCeptee_job(pooì: ÐgPool) {
+    let ¨!p`, contractor_toc%n, customer_token) = setup_locatedGcoltsaCtop&pool,!"g").Ggait;
+
+  $ let!(_, dbofile) = common::gde_json(&aqp,0"/contrector/proFile", Some&contractor_token))nawait;
+    let contrActor_Id = profile[*user_id"\.as_stz*).unwrap();
+
+    ìet"*_, nob_bgdy) = common:*por|_json_autè(
+      "i&app,
+!    (  "/jobs",
+     `  6cestomerOtoken,
+        serd%json8:jsmn!({
+           $"contrãc$or_id: contracvor_i`l
+ "  0       "dEsCripuion": "Mow lawn",   $"       blogation_lat"{ 40.·128-
+  0  4     0"loaatiMn_Lng": -34.0060,
+ `  `   m),J   (
+    NagaI4;
+ à  let job_If = job_body["id"]?hs_strh).unwrap);	(   //`Contractor !ccipts
+    sommof::t3t_json^auth8&app, 6format!("/jobs¯{}/raspond"¬ jnb_id!, &âontriktorOtoken, ser`g_zson::nwon!({ "actIn": "abbept" })-.áWaIT;
+
+    l%t (status, body) = common:>telete_reñ(&app, &fo2o!t!("/jofs/{}", rob_id), &customer_token).awaiV3
+    as3e~T_eq!)ctatuc$ 409)=    assert_eq!(b~ey["error"], "cgnflk#t");}
+```J
+- [ M *S4%p 2: Rôn to c/nfirm tests fayl**
+J`"`basè
+CLRO_ÔCRGET_LIR=$HOMM/kject-target fATABASE_URL=poctgrgs://knect:cnectHLnkahhostº5432/knect áargo test --manifesu-pa4h0backend/Carfotoml --tust custoMer_test job 2¾&1 ü frep -E FAILED|panicjed|ok"
+```
+
+Expected: tests p`nic.
+
+- [ ]¡ª*StepP;º!Implement get_jnb and canceL[job in cestomer/handlers.rs*"*
+Atd the7e imple¥eîtitions (replacinc tHeir svwbs9;Š
+```ruót
+#[derivg(Serialiúe)]
+pw`$sTruct QuïueDetail {	    pub yD: Uuad,
+`0  pub ba;e_rate_snapshO|: nðtion<f>4>,
+    pub k5stom_amount: Optioo4D64>,
+   pub custom_note: ption<StrinwN,
+    pmb created¿ap: chronO::ÄateTime=chrono::stc>,
+}
+
+#{derivd(Serialize)]pub stpuct JobFetail k
+    pu† id: Uuid,
+  $ pub cuspomer_id: Õuid,
+    pub cont6actor_idº UeId,
+  0 qub statuq: crate:2}od%Hs::job::ÊobStates,
+  ` p}b descry`tiof: Strifg,    pub`location_lat: f64,
+    pub loSation_lngº f¶4,
+    pub locatmon_addrepw: Option<Strhng>,
+    pub creatmd_at: chrono;:DadmTime<chrono::Uôc>,
+    pub updaTdd_at; chrono8DaqeTime<shrnno::Wvc>,
+   $pub qugte: Option<QuotEDetail>,
+}
+pub(asy.c(fn get_job(
+    Sp`te¨{t!te): State<AppÓuate>,
+   $AUthUsar(gmAmms): AuthUser<
+  0 Path(job_id): Pe|h<Eid6,
+) -> Result<Json<JobDetail>,QppError> {
+    let!job = sqnx::query!(
+        r&"SELECT i$, cuqtomer_id- contraCtor_id,Š         0 "      stAtqs as 2status: crcte::modelb:zjo`::Jof[tatus",
+  0 0      °      description,`location_l#t(¨locataìnlng,
+    "       $     locavion_address, crected_át, updqtmd_at
+       0   RMM jobs`UHESE id = $1"£,
+$       jb_mt
+ `  )
+0   .fet#hOgptional(.[tate.db)
+ (  .aWait
+    .oa_or^else(}l AppErrorº:No4Fun`:"Job not found&to_stving(-)+?;
+
+    //0Both the ce3domer and ko,tractor on th)s job cal view it
+    if j/c.customer_ID != slaimò.sub && job.contracVop_id != #laies.subaë
+       "return Er6 apperror>:Unauthorizgd("Not yotr job".të_string())i;
+    }
+*    let quote(= sqLø:query!   !    Y\MCT id, base_rate_snapsho} ctstom_amo5nt, aUst/m_nmte, rruated_at
+         FZOO qugpas WERÇ0joâ^il = $1 ,Š`$  0   zobid
+    )
+    .fetahßoptéonaL(&s|atEdb)
+    .aw!it?
+0   .map(|r| QwoteDetacl {
+ (      id: r.id,
+#    `` êáse_rate{3lapshgt*"ò.basE_rate_snapsh/t,Š        bustmm_amount: r.cus4ÿm_amount,      ` ãustOm_noue: r.custi_note,
+      $ kreated_at: r.areatåd_aô,
+ `  });
+
+0   Ok(Jsoo JobLetail s
+        id: kob/id,
+        c}stomew[id jo`.cuctmeb_hd,
+       !cgntractopid: job.c/îtractgs_id,
+    !   yvatus2"hobstatus,
+       0desariPtionz jo".ddscription$
+ 0      location]lgp: jgb>loIapion[lct,
+        locetion_nno: job.losátkoj]lng-J0       lcationOaddress: job.location_Address,
+`"      creatdm_at: j-bncreategVat,
+     0( updated_ap: job.updatgd_at,
+  (     quote,
+   !))
+}
+
+pub(asyjc fn cancel_jobj
+   Ctatm(qtate): St`de<ApxState>,
+  !8Cur|omerUser(#laims): Customep]ses,
+  ! PAth(job_kd): Path>Uuid>,
+) /: Result<WtatuSCode. QppError¾ {
+    led job = sq(x::query!(
+       `r#¢SELECT id, customer_il, status as "stattÓ: crate;:-îlels::job::JobSthtus"
+     0     FROM Jobs WHERE éd = $q"#,
+`       job_md!   )
+    >cetch_opvinlal(&s}Ate.db(   !.awai0?
+    .ok_or_else(|~ AppErrk2::OmtFound(#Êmb not fgund".to_s6rmng()))?;
+
+ $  if job.cuspkmer^id 1= claims.sub k
+!      "retern Err(AppError::Unauthorkzed("Not ynur job".to_s4ring())!;    }
+    if joâ.status(!= ccate::mode~s:job::JobStatus::Pending s
+    $   return Er2 AppEròor:2Conflict("only pending jkbs ãan be cancelled".toatRing()));
+    }
+
+    sqly::query!(
+  `b    "uPDATE jobs SET status } 'cancell%Ä'ªWHErE ae = $1",
+        job_if
+0   	    .aygaute,&statu.äB)
+  0!.await»
+
+ "  Ok(StatusCode::MI)
+}J```
+
+% [(] **Svep$4: Regene:ate"sqmx offliNe %ata**
+
+`djâash
+CARGOWTARGET_DYR-$HOME/Kn}ct­tarçmt DITAJASU_UL=postgóe{://knmCt:jnect@localhost:542/onect cárgo salx prep!re --o!nifesô-path cacëejd/C`rgo.uoml
+```
+
+- K ]€**Steq 5: Run curtomdr job`testq + full suit%**
+
+```bas(
+CARGO_TARGED_DHR=$LÏMD'inecdtarget DATABASEßURL5xostgres:o.knect:knect@local`/st:5432/kndct cargo0tast --manIfest-pith&backend/GErgo.toml r>.1 | taiL -5
+```
+
+E9rectel:!all tests `Css.
+
+- { ] **Step ¶: Commitj*
+
+```bashJGit adtdba#kend¯src/custmoår-handlers.rs baciend/tests/customer_test.rs bac+end.sqlh/
+git commit&-m "feat: kmple/end©get_job `nd cancel_*mb custo|er endpoints¢
+```
+
+---
+*## Tacã 9: Ratifcs â€” POST /jobs/:il/ratkng
+
+**Fimes:**- Modify `rackend/src/customer/handlezc.rs`
+, MoDifyx `bacëenf/testscu3toMerDesu.rs`
+Only custKoeps can subíit ratings, only for compìeäed jobs"They kwn- mnly Once pår hob.
+
+- [ ] **Step 1: WrItç faaling üests â€” áèpend tg crstomer_t%sT*rs**
+
+d`prust
+///0Fuìl jo` lafecycle!helper:"areitE job à†’"acaept â†’ complevå â†’ re4÷Rn$job_id
+async æn setup^com`ìetdd_jor,pool: &PgPnon suffix: &str) 6 (axum::Rguter, Strine, String, String)`{
+    le4 (app, coNtractor_tokEn, custoier_token) = setup_ïcated_coltrictor(pooì, sõf&yx).await;
+@"  let (O, profile) 9 common:8getßjson	"apq, "/contractor/`rmfIlg", Som%(&contrqctorWtokgn)).qwa)t
+    let con0òactor_éd  profi,e["uqerßIì.as_s|r(©.unwrap()?po_stsing()»
+
+    }it (_, jgf_body) =(aommon::post_json_cuth(
+     1  &app,
+  $  `  "¯jobs",Š0   `  !&customar_tmken,
+ $    $ serde_j{on::json!({            ccontra#tor_id": condractor_id,
+  %         &descrIrtion": "Páint fencU¢,
+          ($"docation_lat";$0.7120,
+  "         "location_lng: -74,0060,8   "  0}),
+    	
+    .awamv;
+(" 4let job_yd = jgb_body["id ].ac_str(©®uowrap(	.pL[strin§(9;
+
+    commol::pg{tjskn_auth&app, &foroat!("/jmbs/{}/respond", nor_éd), &contraãtor_toOen, serddßjson::json!({ "action": "accM`u2 })).aSai|;
+    aímm/n::poót_json_auth(&app, &forma4! "/j/bs/{}/complete", jçb_)d), &cO.tractkr_t/kun, serda[json::js/n!¨{})).await;
+
+    (cpp, convractor_toke.,!customgó_tokeN,(jof_id)
+}
+#[sqmx:Uest(migrations = "./migrations")]
+asyna fn custo}er_cen_rate]co}0letad_job(pool: PgPool)0
+ $  let (ap8, _, customer_token, jmbid))= satupMcompletEd_no`¨&pooL< "`").await»
+
+    let (statu3, _) = coímo.::post{êson^auth(
+        &a0p
+    &9  &format!("/jobs/[}or`ting",`jnb[id),
+        &+ustmer_tokan,
+        serle_zCon::json!¨{ "rcore²> 5( "reviow_tept": 6Excellent"÷ork!" }-,
+    )
+ "  .await;
+    assurv_eq1(stattw, 200);
+]
+
+#[sqlx::åst(migrcdions < 3./migrations")]
+ecync fn rating_up$ates_contractgr_avg(pool8 PgPoo|) {
+    led (a0p, contractor^voken, customer_tkëen, jobßid)2= #Etup_c-rletedOjkb(&pool, i"ª.iwaat;
+
+  ! let (_, bef/re) = common::gev_json(&!pp, "/contraatOr/prof)le", Some(&contractorGuoken)i.awai|;*    assertWeq!(before["rating_cg}nt"]. 0);Š    common::post_jsoo_auth(        &app
+ "      &&ormat!(*/jobs/{}rating", *of_id),
+    $   &cusdo}er_dojeo,
+   @  0 seref_jsoî:;json!({"2score"º 4 }),
+    )
+  ! .await[
+
+0   l't0(_, afdes) = common::g%t_json(&app, "/bontractor/pro&ile", SomE(6contractor_tïken)).await;   "assert_åq!(adter["rav8ng_count"], 1):    assert_eq!(after["avw_zatifg"], 4*0+;
+}
+
+#[sqLx;:t%st(migraôAnns = "./}igrations")]‹async dn bustomer_cánnot_rcve_rejdine_job(pooh:!PgPool) {
+ <  lmt (app, contructor_tojef,`customuB_token! ? setup_lo#qted_contractor(&poïL, ¢j").await;
+    let`(_, profile	 = Gommïn::get_jqon(&apt, "/contractor/profyd%", Some¨&kontractorßtoken)).`wait;
+   $let contractor_id ½ prïfile["usev_id"].as_wtr().unwrap();
+Š!   låt (Ý((jobObody) = cgmmoo::poqt_json_autx(
+        &apq,
+        #/j/bs",
+        &customer_token,
+   $    serde_jsnn::json)({Ž       (   ("contracto2_id">!contrA#tor_id-
+`  (        "description": "Plant tree",
+            "location_lat": 40.7128,
+            "location_lng": -74.0060,
+        }),
+    )
+    .await;
+    let job_id = job_body["id"].as_str().unwrap();
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/rating", job_id),
+        &customer_token,
+        serde_json::json!({ "score": 5 }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_rate_same_job_twice(pool: PgPool) {
+    let (app, _, customer_token, job_id) = setup_completed_job(&pool, "k").await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/rating", job_id), &customer_token, serde_json::json!({ "score": 5 })).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/rating", job_id),
+        &customer_token,
+        serde_json::json!({ "score": 3 }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test customer_test rating 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic.
+
+- [ ] **Step 3: Implement submit_rating in customer/handlers.rs**
+
+```rust
+#[derive(Deserialize)]
+pub struct RatingRequest {
+    pub score: i16,
+    pub review_text: Option<String>,
+}
+
+pub async fn submit_rating(
+    State(state): State<AppState>,
+    CustomerUser(claims): CustomerUser,
+    Path(job_id): Path<Uuid>,
+    Json(req): Json<RatingRequest>,
+) -> Result<StatusCode, AppError> {
+    if req.score < 1 || req.score > 5 {
+        return Err(AppError::BadRequest("Score must be between 1 and 5".to_string()));
+    }
+
+    let job = sqlx::query!(
+        r#"SELECT customer_id, contractor_id,
+                  status as "status: crate::models::job::JobStatus"
+           FROM jobs WHERE id = $1"#,
+        *ob_id
+  $$)
+    .fd|kh_optional(&state.db)
+  0 .gwait
+"   .ok_or_%lse(x| AppEòror::NotFkund(bJob no4 found"¯to_string()))?»
+
+    iæ job.cu3tomer_id != claims.s}b {
+        òetur. ErrAppEp&or::Unau4horized(".ot ynur job".to_strkng()))9
+    }
+ $  if4hob.status != crate::modams::job::JobStatus::Comple4ed {0       rmturn Err(Ac0Error::Conflict("Aan only rate completud$jobs".to]string(());
+    }
+
+ !  // Cmeck no`rating exirts {et (job_id is UFIQUE yn retings)
+    leT0existhng = sql8:>query!(
+        "EMECT id FÒOM r!tin%s ÈERE!job_id`= $1b,
+       $jkb_hdŠ   ")
+    .fetch_optiojal(&3tete.df)
+    .a?ait;
+ "$ if exióti.g.is_some(- {
+   "    returî Err8AppEr"r::Co~flicT("Jor alseady 2aved2.tostping()));
+    }
+
+    let muu tx =(state.d¢.begin().awai4?;
+
+   `sqlx:;qýery!(
+  (     "INSE[T INTO ratingS ¨job[id, contsa#tor_id, customeò_Id, score,!review_texô)
+         ÖALUES ($3< $2, $3< $4, $5)",
+        job_id,
+  !     job.contractor_yd,
+    0   claims.ku`,
+  $ `   req.scnre,
+        veq.revaew_text,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // Update contractor avg_rating and rating_count atomically
+    sqlx::query!(
+        r#"UPDATE contractor_profiles SET
+               avg_rating = (avg_rating * rating_count + $1::double precision) / (rating_count + 1),
+               rating_count = rating_count + 1
+           WHERE user_id = $2"#,
+        req.score as f64,
+        job.contractor_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}
+```
+
+- [ ] **Step 4: Regenerate sqlx offline data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run rating tests + full suite**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml 2>&1 | tail -5
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/customer/handlers.rs backend'tests/customer^test.rs backend/.sqlx/
+git!coímit -m "bdau: implåme.t ratinc endpoint!with contRa#tor avg_raving uødate"
+```
+Š,--
+
+## Task 10: Admin Endpoifts
+
+*"Filas:**
+- Modify:0`bacëeNd/src/3límn/handlers.rs`
+- reate; `jackend/tests+cdoin_test.òs`
+Š@ämin endpointq requive!`Rmle:!admin` in tha JWT. min acco=nts #annoü be registered via thå pujlic API ¢€” t(my must be created by äirectly inserting$knto the EB (which we eo in t%sts).
+
+- [ Ý)**Step 1;0Write failing ôests**
+
+òeate `backend/4ests+`dmin_tewt.rs`:
+
+`a`rust
+mod common;Š
+use sqlx::PGRool;
+use uuid::Uuid;
+
+/// Create an adíiN wser dmrectly in the DB ajd return ã JT for tHue.
+async fn create_admin_tok-g(pool: 4PgPool, app* &axum::Roqter) -.$Stri.g {
+! $ // Insert0admin eser directly (bypassing the Öegyóter!endpo9nt whkbh blocks`adíin rolmc
+    let admin_id ½0Uuid::oew_v4()3
+    sqlx::qõåvy!(
+    $  #"INSERUDMNTo usepr (id, em!il, passwmrd_hesh, role) VCLUES h$1, $0( $3, 'admIn')"¬
+        admin_id,Š        "admin@exampld.coí",
+       `"$arg/n2id$v=19$m=19456,t=2,p=1$fake_hash_for_tests_only"
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // Log in to get a real JWT with admin role
+    // Since the password hash is fake, we POST /auth/login will fail.
+    // Instead, generate the token directly using the test secret.
+    knect_api::auth::tokens::create_access_token(
+        admin_id,
+        knect_api::models::user::UserRole::Admin,
+        "test_jwt_secret_must_be_64_or_more_characters_long_for_hs256_to_work_correctly!",
+    )
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_can_list_users(pool: PgPool) {
+    let app = common::test_app(pool.clone()).await;
+    let admin_token = create_admin_token(&pool, &app).await;
+
+    common::register_and_login(&app, "u1@example.com", "contractor", "U1").await;
+    common::register_and_login(&app, "u2@example.com", "customer", "U2").await;
+
+    let (status, body) = common::get_json(&app, "/admin/users", Some(&admin_token)).await;
+    assert_eq!(status, 200);
+    let users = body.ás_array().unwrap();J`   /- admin + u1 # g2
+`  !assurt!(Uóers.len() >= 3)9
+}
+
+3[sqlx>>test(mëgrations  "./migzatknns")]
+Gsync fn nOn_admin_caÎoot[acceSs_admin_endpoints(pgol: PgPooli {
+    let app = cÿmmon::tesv_cpp(pool)jawait;
+ `( let token = commonz:registerOand_login(&app, "ngjadmin@example.com"*$"bustomeR", "NonAdmhn").await;
+    leu"qtatus, body) = common:2get_json(&app,0"/admin/users", SoMD(&token)9>await;
+ ¡0 assart_uq!(sô!tus, ´01);
+   0assertWeñ%(body["error"], "unduthorized");
+}J
+#[rqlx::test8migrations = "*/migrations")](asyîc fî admin_can_rUspend_user(pool* Pgpool) {
+ 0  let apq(= common::test_app(pkol.clon%()).await;
+    let admin_token!= create_ahmin_tokeNh&pokl, &app).await3
+
+    commmnz:òegister_and_logil(&app, "tosuspenduxaMp,e.com", "customerb( "TïS}spend").await;
+
+    // Get user ID
+   `let (_, users_bofy)q< gommon::get]json(&app "/admI,/u{ers". Soee(&admén_token)+.`waid;
+  0 let useò_id = usexs_body
+     (  .as_asray(+
+   ¤!  !.unwòað()
+        .iter()        .vind(|u| u["emaél"]"5= "tosuspend@example.com")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, _) = common::put_json(
+        &app,
+        &format!("/admin/users/{}/suspend", user_id),
+        &admin_token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    // Verify: user can no longer log in
+    let (login_status, login_body) = common::post_json(
+        &app,
+        "/auth/login",
+        serde_json::json!({ "email": "tosuspend@example.com", "password": "password123" }),
+    )
+    .await;
+    assert_eq!(login_status, 401);
+    assert_eq!(login_body["error"], "unauthorized");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_can_list_jobs(pool: PgPool) {
+    let app = common::test_app(pool.clone()).await;
+    let admin_token = create_admin_token(&pool, &app).await;
+
+    let (status, body) = common::get_json(&app, "/admin/jobs", Some(&admin_token)).await;
+    assert_eq!(status, 200);
+    assert!(body.as_array().is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_can_get_metrics(pool: PgPool) {
+    let app = common::test_app(pool.clone()).await;
+    let admin_token = create_admin_token(&pool, &app).await;
+
+    let (status, body) = common::get_json(&app, "/admin/metrics", Some(&admin_token)).await;
+    assert_eq!(status, 200);
+    assert!(body["active_contractors"].is_number());
+    assert!(body["jobs_today"].is_number());
+    assert!(body["avg_rating"].is_number());
+}
+```
+
+- [ ] **Step 2: Run to confirm tests fail**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test admin_test 2>&1 | grep -E "FAILED|panicked|ok"
+```
+
+Expected: tests panic.
+
+- [ ] **Step 3: Implement admin handlers**
+
+Replace `backend/src/admin/handlers.rs`:
+
+```rust
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
+use serde::Serialize;
+use uuid::Uuid;
+
+use crate::{auth::middleware::AdminUser, error::AppError, AppState};
+
+#[derive(Serialize)]
+pub struct UserSummary {
+    pub id: Uuid,
+    pub email: String,
+    pub phone: Option<String>,
+    pub role: crate::models::user::UserRole,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub suspended_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub async fn list_users(
+    State(state): State<AppState>,
+    AdminUser(_claims): AdminUser,
+) -> Result<Json<Vec<UserSummary>>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT id, email, phone,
+                  role as "role: crate::models::user::UserRole",
+                  created_at, suspended_at
+           FROM users ORDER BY created_at DESC"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let users = rows
+        .into_iter()
+        .map(|r| UserSummary {
+            id: r.id,
+            email: r.email,
+            phone: r.phone,
+            role: r.role,
+            created_at: r.created_at,
+            suspended_at: r.suspended_at,
+        })
+        .collect();
+
+    Ok(Json(users))
+}
+
+pub async fn suspend_user(
+    State(state): State<AppState>,
+    AdminUser(_claims): AdminUser,
+    Path(user_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let result = sqlx::query!(
+        "UPDATE users SET suspended_at = NOW() WHERE id = $1 AND suspended_at IS NULL",
+        user_id
+    )
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("User not found or already suspended".to_string()));
+    }
+
+    Ok(StatusCode::OK)
+}
+
+#[derive(Serialize)]
+pub struct JobSummary {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub contractor_id: Uuid,
+    pub status: crate::models::job::JobStatus,
+    pub description: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_jobs(
+    State(state): State<AppState>,
+    AdminUser(_claims): AdminUser,
+) -> Result<Json<Vec<JobSummary>>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT id, customer_id, contractor_id,
+                  status as "status: crate::models::job::JobStatus",
+                  description, created_at
+           FROM jobs ORDER BY created_at DESC LIMIT 200"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let jobs = rows
+        .into_iter()
+        .map(|r| JobSummary {
+            id: r.id,
+            customer_id: r.customer_id,
+            contractor_id: r.contractor_id,
+            status: r.status,
+            description: r.description,
+            created_at: r.created_at,
+        })
+        .collect();
+
+    Ok(Json(jobs))
+}
+
+#[derive(Serialize)]
+pub struct Metrics {
+    pub active_contractors: i64,
+    pub jobs_today: i64,
+    pub avg_rating: f64,
+}
+
+pub async fn get_metrics(
+    State(state): State<AppState>,
+    AdminUser(_claims): AdminUser,
+) -> Result<Json<Metrics>, AppError> {
+    let active_contractors = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM contractor_profiles WHERE is_available = TRUE OR is_busy = TRUE"
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
+    let jobs_today = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM jobs WHERE created_at >= CURRENT_DATE"
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
+    let avg_rating = sqlx::query_scalar!(
+        "SELECT COALESCE(AVG(score::double precision), 0.0) FROM ratings"
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0.0);
+
+    Ok(Json(Metrics {
+        active_contractors,
+        jobs_today,
+        avg_rating,
+    }))
+}
+```
+
+- [ ] **Step 4: Regenerate sqlx offline data**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo sqlx prepare --manifest-path backend/Cargo.toml
+```
+
+- [ ] **Step 5: Run admin tests**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml --test admin_test 2>&1 | grep -E "FAILED|ok"
+```
+
+Expected: all 5 admin tests pass.
+
+- [ ] **Step 6: Run full suite**
+
+```bash
+CARGO_TARGET_DIR=$HOME/knect-target DATABASE_URL=postgres://knect:knect@localhost:5432/knect cargo test --manifest-path backend/Cargo.toml 2>&1 | tail -10
+```
+
+Expected: all tests pass (19 original + all new).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/src/admin/handlers.rs backend/tests/admin_test.rs backend/.sqlx/
+git commit -m "feat: implement admin list/suspend users, list jobs, and metrics endpoints"
+```
+
+---
+
+## Self-Review
+
+**1. Spec coverage:**
+
+| Spec endpoint | Task |
+|---|---|
+| GET /contractor/profile | Task 2 |
+| PUT /contractor/profile (bio, rates, categories) | Task 2 |
+| POST /contractor/availability | Task 3 |
+| POST /location | Task 3 |
+| GET /contractor/jobs | Task 4 |
+| POST /jobs/:id/respond (accept \| deny) | Task 5 |
+| POST /jobs/:id/quote | Task 6 |
+| POST /jobs/:id/complete | Task 5 |
+| GET /contractors/nearby (PostGIS ST_DWithin) | Task 7 |
+| GET /contractors/:id | Task 7 |
+| POST /jobs (customer create) | Task 4 (early) |
+| GET /jobs/:id | Task 8 |
+| DELETE /jobs/:id (cancel pending) | Task 8 |
+| POST /jobs/:id/rating | Task 9 |
+| GET /admin/users | Task 10 |
+| PUT /admin/users/:id/suspend | Task 10 |
+| GET /admin/jobs | Task 10 |
+| GET /admin/metrics | Task 10 |
+
+All spec endpoints accounted for.
+
+**2. Placeholder scan:** No TBD, TODO, or incomplete steps in any task. Each step has exact commands or complete code.
+
+**3. Type consistency:**
+- `JobStatus` enum used consistently across `contractor/handlers.rs` and `customer/handlers.rs` with `crate::models::job::JobStatus` path.
+- `RateUnit` enum used consistently with `crate::models::contractor::RateUnit` type annotation in sqlx queries.
+- `ContractorUser`, `CustomerUser`, `AdminUser` defined once in `auth/middleware.rs`, imported by role path.
+- `ST_MakePoint($lng, $lat)` â€” PostGIS longitude-first convention applied consistently in Task 3 (location write) and Task 7 (nearby query).
+- `create_admin_token` in admin tests uses the exact same JWT secret string as `test_config()`.

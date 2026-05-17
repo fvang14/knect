@@ -59,6 +59,16 @@ pub async fn create_job(
     .execute(&state.db)
     .await?;
 
+    state.hub.publish_job_event(
+        contractor.user_id,
+        &crate::ws::events::WsEvent::JobRequested {
+            job_id,
+            description: req.description.clone(),
+            location_lat: req.location_lat,
+            location_lng: req.location_lng,
+        },
+    ).await;
+
     Ok(Json(JobResponse { id: job_id }))
 }
 

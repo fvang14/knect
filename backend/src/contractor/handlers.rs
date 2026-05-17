@@ -200,6 +200,14 @@ pub async fn update_location(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
 
+    state.hub.publish_location(
+        &crate::ws::events::WsEvent::LocationUpdate {
+            contractor_id: claims.sub,
+            lat: req.lat,
+            lng: req.lng,
+        },
+    ).await;
+
     Ok(StatusCode::OK)
 }
 
@@ -270,7 +278,7 @@ pub async fn respond_to_job(
     Json(req): Json<RespondRequest>,
 ) -> Result<StatusCode, AppError> {
     let job = sqlx::query!(
-        r#"SELECT id, status as "status: JobStatus", contractor_id
+        r#"SELECT id, status as "status: JobStatus", contractor_id, customer_id
            FROM jobs WHERE id = $1"#,
         job_id
     )
@@ -301,6 +309,10 @@ pub async fn respond_to_job(
             .execute(&mut *tx)
             .await?;
             tx.commit().await?;
+            state.hub.publish_job_event(
+                job.customer_id,
+                &crate::ws::events::WsEvent::JobAccepted { job_id },
+            ).await;
         }
         "deny" => {
             sqlx::query!(
@@ -309,6 +321,10 @@ pub async fn respond_to_job(
             )
             .execute(&state.db)
             .await?;
+            state.hub.publish_job_event(
+                job.customer_id,
+                &crate::ws::events::WsEvent::JobDenied { job_id },
+            ).await;
         }
         _ => {
             return Err(AppError::BadRequest("action must be 'accept' or 'deny'".to_string()));
@@ -324,7 +340,7 @@ pub async fn complete_job(
     Path(job_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let job = sqlx::query!(
-        r#"SELECT id, status as "status: JobStatus", contractor_id
+        r#"SELECT id, status as "status: JobStatus", contractor_id, customer_id
            FROM jobs WHERE id = $1"#,
         job_id
     )
@@ -353,6 +369,11 @@ pub async fn complete_job(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    state.hub.publish_job_event(
+        job.customer_id,
+        &crate::ws::events::WsEvent::JobCompleted { job_id },
+    ).await;
 
     Ok(StatusCode::OK)
 }

@@ -1,8 +1,9 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -140,10 +141,69 @@ pub async fn update_profile(
     Ok(StatusCode::OK)
 }
 
+// ─── Availability ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AvailabilityRequest {
+    pub available: bool,
+}
+
+pub async fn set_availability(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Json(req): Json<AvailabilityRequest>,
+) -> Result<StatusCode, AppError> {
+    sqlx::query!(
+        "UPDATE contractor_profiles SET is_available = $1 WHERE user_id = $2",
+        req.available,
+        claims.sub,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}
+
+// ─── Location ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct LocationRequest {
+    pub lat: f64,
+    pub lng: f64,
+}
+
+pub async fn update_location(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Json(req): Json<LocationRequest>,
+) -> Result<StatusCode, AppError> {
+    let key = format!("contractor:{}:pos", claims.sub);
+    let value = format!("{},{}", req.lat, req.lng);
+    let mut conn = state.redis.clone();
+    conn.set_ex::<_, _, ()>(&key, &value, 30)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Redis error: {e}")))?;
+
+    // ST_MakePoint(longitude, latitude) — PostGIS uses (lng, lat) order
+    sqlx::query!(
+        r#"UPDATE contractor_profiles
+           SET current_lat = $1,
+               current_lng = $2,
+               current_location = ST_MakePoint($2, $1)::geography,
+               location_updated_at = NOW()
+           WHERE user_id = $3"#,
+        req.lat,
+        req.lng,
+        claims.sub,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}
+
 // ─── Stubs for later tasks ──────────────────────────────────────────────────
 
-pub async fn set_availability() -> StatusCode { todo!() }
-pub async fn update_location() -> StatusCode { todo!() }
 pub async fn list_jobs() -> StatusCode { todo!() }
 pub async fn respond_to_job() -> StatusCode { todo!() }
 pub async fn submit_quote() -> StatusCode { todo!() }

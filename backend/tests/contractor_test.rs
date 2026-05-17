@@ -68,3 +68,71 @@ async fn contractor_can_update_trade_categories(pool: PgPool) {
     .await;
     assert_eq!(status, 200);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_toggle_availability_on(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "avail@example.com", "contractor", "Avail").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        "/contractor/availability",
+        &token,
+        serde_json::json!({ "available": true }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    assert_eq!(body["is_available"], true);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_toggle_availability_off(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "avail2@example.com", "contractor", "Avail2").await;
+
+    common::post_json_auth(&app, "/contractor/availability", &token, serde_json::json!({ "available": true })).await;
+    let (status, _) = common::post_json_auth(&app, "/contractor/availability", &token, serde_json::json!({ "available": false })).await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    assert_eq!(body["is_available"], false);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_update_location(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "loc@example.com", "contractor", "LocUser").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        "/location",
+        &token,
+        serde_json::json!({ "lat": 40.7128, "lng": -74.0060 }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/contractor/profile", Some(&token)).await;
+    let lat = body["current_lat"].as_f64().unwrap();
+    let lng = body["current_lng"].as_f64().unwrap();
+    assert!((lat - 40.7128).abs() < 0.0001);
+    assert!((lng - (-74.0060)).abs() < 0.0001);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn customer_cannot_post_location(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "cust_loc@example.com", "customer", "Cust").await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        "/location",
+        &token,
+        serde_json::json!({ "lat": 40.0, "lng": -74.0 }),
+    )
+    .await;
+    assert_eq!(status, 401);
+    assert_eq!(body["error"], "unauthorized");
+}

@@ -158,5 +158,8 @@ pub async fn register_and_login(
         }),
     )
     .await;
-    body["access_token"].as_str().unwrap().to_string()
+    body["access_token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("register_and_login failed for {email}: {body}"))
+        .to_string()
 }

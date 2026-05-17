@@ -288,3 +288,37 @@ async fn contractor_cannot_complete_pending_job(pool: PgPool) {
     assert_eq!(status, 409);
     assert_eq!(body["error"], "conflict");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_can_submit_quote_for_accepted_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    common::post_json_auth(&app, &format!("/jobs/{}/respond", job_id), &contractor_token, serde_json::json!({ "action": "accept" })).await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/quote", job_id),
+        &contractor_token,
+        serde_json::json!({
+            "custom_amount": 150.0,
+            "custom_note": "Parts + 2hrs labor"
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_cannot_quote_pending_job(pool: PgPool) {
+    let (app, contractor_token, _, job_id) = setup_pending_job(&pool).await;
+
+    let (status, body) = common::post_json_auth(
+        &app,
+        &format!("/jobs/{}/quote", job_id),
+        &contractor_token,
+        serde_json::json!({ "custom_amount": 100.0 }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(body["error"], "conflict");
+}

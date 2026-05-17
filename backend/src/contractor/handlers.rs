@@ -356,6 +356,54 @@ pub async fn complete_job(
     Ok(StatusCode::OK)
 }
 
-// ─── Stub for later task ──────────────────────────────────────────────────
+// ─── Quotes ───────────────────────────────────────────────────────────────
 
-pub async fn submit_quote() -> StatusCode { todo!() }
+#[derive(Deserialize)]
+pub struct QuoteRequest {
+    pub custom_amount: Option<f64>,
+    pub custom_note: Option<String>,
+}
+
+pub async fn submit_quote(
+    State(state): State<AppState>,
+    ContractorUser(claims): ContractorUser,
+    Path(job_id): Path<Uuid>,
+    Json(req): Json<QuoteRequest>,
+) -> Result<StatusCode, AppError> {
+    let job = sqlx::query!(
+        r#"SELECT status as "status: JobStatus", contractor_id,
+                  cp.base_rate as contractor_base_rate
+           FROM jobs j
+           JOIN contractor_profiles cp ON cp.user_id = j.contractor_id
+           WHERE j.id = $1"#,
+        job_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Job not found".to_string()))?;
+
+    if job.contractor_id != claims.sub {
+        return Err(AppError::Unauthorized("Not your job".to_string()));
+    }
+    if job.status != JobStatus::Accepted && job.status != JobStatus::InProgress {
+        return Err(AppError::Conflict("Job must be accepted to submit a quote".to_string()));
+    }
+
+    sqlx::query!(
+        "INSERT INTO quotes (job_id, contractor_id, base_rate_snapshot, custom_amount, custom_note)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (job_id) DO UPDATE SET
+             custom_amount = EXCLUDED.custom_amount,
+             custom_note = EXCLUDED.custom_note,
+             base_rate_snapshot = EXCLUDED.base_rate_snapshot",
+        job_id,
+        claims.sub,
+        job.contractor_base_rate,
+        req.custom_amount,
+        req.custom_note,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}

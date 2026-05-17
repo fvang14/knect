@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO quotes (job_id, contractor_id, base_rate_snapshot, custom_amount, custom_note)\n         VALUES ($1, $2, $3, $4, $5)\n         ON CONFLICT (job_id) DO UPDATE SET\n             custom_amount = EXCLUDED.custom_amount,\n             custom_note = EXCLUDED.custom_note,\n             base_rate_snapshot = EXCLUDED.base_rate_snapshot",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Float8",
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "77fb0577f3342ccaefa7d859649a306f0dd0969b4027a7948bcc43f96969a9ad"
+}

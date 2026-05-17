@@ -99,10 +99,31 @@ pub struct LoginRequest {
 }
 
 pub async fn login(
-    State(_state): State<AppState>,
-    Json(_req): Json<LoginRequest>,
+    State(state): State<AppState>,
+    Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
-    todo!()  // implemented in Task 8
+    let row = sqlx::query!(
+        r#"SELECT id, password_hash, role as "role: UserRole", suspended_at
+           FROM users WHERE email = $1"#,
+        req.email
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("Invalid email or password".to_string()))?;
+
+    if row.suspended_at.is_some() {
+        return Err(AppError::Unauthorized("Account suspended".to_string()));
+    }
+
+    if !crate::auth::password::verify_password(&req.password, &row.password_hash)? {
+        return Err(AppError::Unauthorized("Invalid email or password".to_string()));
+    }
+
+    let access_token = create_access_token(row.id, row.role.clone(), &state.config.jwt_secret)?;
+    let refresh_token =
+        create_refresh_token(row.id, row.role, &state.config.jwt_refresh_secret)?;
+
+    Ok(Json(AuthResponse { access_token, refresh_token }))
 }
 
 #[derive(Deserialize)]

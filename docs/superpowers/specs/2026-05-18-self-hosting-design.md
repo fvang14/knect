@@ -60,20 +60,19 @@ Script run from the developer's Mac:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-ssh home "cd ~/knect && git pull && docker compose -f backend/docker-compose.prod.yml up --build -d"
+ssh home "cd ~/Projects/knect && git pull && docker compose -f backend/docker-compose.prod.yml up --build -d"
 ```
 
 ---
 
 ## First-Time Server Setup
 
-Steps performed once, manually via SSH:
+Steps performed once, manually via SSH (repo already cloned at `~/Projects/knect`):
 
 1. Install Docker (and Docker Compose plugin) on the Linux machine
-2. `git clone <repo-url> ~/knect`
-3. Create `~/knect/.env` with real values for all vars in `.env.example`
-4. Open port 3000: `sudo ufw allow 3000/tcp`
-5. `cd ~/knect && docker compose -f backend/docker-compose.prod.yml up --build -d`
+2. Create `~/Projects/knect/.env` with real values for all vars in `.env.example`
+3. Open port 3000: `sudo ufw allow 3000/tcp`
+4. `cd ~/Projects/knect && docker compose -f backend/docker-compose.prod.yml up --build -d`
 
 The first build compiles the Rust binary inside Docker — this takes several minutes. Subsequent builds use Docker's layer cache and are much faster.
 
@@ -102,7 +101,7 @@ http://<server-public-ip>:3000
 
 - HTTP only — acceptable for a personal dev environment
 - Postgres and Redis are not exposed to the host; only reachable within the Docker network
-- Real secrets live only in `~/knect/.env` on the server, never in git
+- Real secrets live only in `~/Projects/knect/.env` on the server, never in git
 - When ready for production: add Caddy or nginx in front for HTTPS via Let's Encrypt
 
 ---

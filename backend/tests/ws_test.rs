@@ -342,3 +342,50 @@ async fn customer_receives_job_completed_over_ws(pool: PgPool) {
     assert_eq!(msg["type"], "job_completed");
     assert_eq!(msg["job_id"], job_id.to_string());
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn contractor_receives_job_cancelled_over_ws(pool: PgPool) {
+    let (addr, _) = common::start_ws_server(pool.clone()).await;
+
+    let contractor_id = insert_contractor(&pool, "jcan_c@example.com", "JCAN_C").await;
+    let customer_id = insert_customer(&pool, "jcan_k@example.com", "JCAN_K").await;
+
+    let contractor_token =
+        create_access_token(contractor_id, UserRole::Contractor, JWT_SECRET).unwrap();
+    let customer_token =
+        create_access_token(customer_id, UserRole::Customer, JWT_SECRET).unwrap();
+
+    let job_id = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO jobs (id, customer_id, contractor_id, description, location_lat, location_lng)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        job_id,
+        customer_id,
+        contractor_id,
+        "Fix the boiler",
+        40.7128_f64,
+        -74.0060_f64
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Contractor connects WS
+    let contractor_url = format!("ws://{}/ws?token={}", addr, contractor_token);
+    let (mut contractor_ws, _) = connect_async(contractor_url).await.unwrap();
+
+    // Customer cancels the job via HTTP
+    let http = reqwest::Client::new();
+    let resp = http
+        .delete(format!("http://{}/jobs/{}", addr, job_id))
+        .header("authorization", format!("Bearer {}", customer_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Contractor receives job_cancelled
+    let msg = next_text(&mut contractor_ws, "job_cancelled").await;
+    assert_eq!(msg["type"], "job_cancelled");
+    assert_eq!(msg["job_id"], job_id.to_string());
+}

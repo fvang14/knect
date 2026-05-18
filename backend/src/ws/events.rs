@@ -17,6 +17,7 @@ pub enum WsEvent {
     JobAccepted { job_id: Uuid },
     JobDenied { job_id: Uuid },
     JobCompleted { job_id: Uuid },
+    JobCancelled { job_id: Uuid },
 }
 
 #[cfg(test)]
@@ -61,5 +62,14 @@ mod tests {
         let decoded: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded["type"], "job_accepted");
         assert_eq!(decoded["job_id"], id.to_string());
+    }
+
+    #[test]
+    fn job_cancelled_serializes_with_type_field() {
+        let id = Uuid::new_v4();
+        let event = WsEvent::JobCancelled { job_id: id };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "job_cancelled");
+        assert_eq!(json["job_id"], id.to_string());
     }
 }

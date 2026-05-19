@@ -1,0 +1,72 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               j.id, j.contractor_id,\n               cp.display_name AS contractor_display_name,\n               j.status AS \"status: crate::models::job::JobStatus\",\n               j.description, j.created_at,\n               EXISTS(\n                   SELECT 1 FROM ratings r WHERE r.job_id = j.id\n               ) AS \"has_rating!: bool\"\n           FROM jobs j\n           JOIN contractor_profiles cp ON cp.user_id = j.contractor_id\n           WHERE j.customer_id = $1\n           ORDER BY j.created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "contractor_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "contractor_display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: crate::models::job::JobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "accepted",
+                "denied",
+                "in_progress",
+                "completed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "has_rating!: bool",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "ddbf8be337436082c5f9a788e6079adf24cca1cee9068e31f472ed954c96856c"
+}

@@ -46,6 +46,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/contractors/nearby", get(customer::handlers::nearby_contractors))
         .route("/contractors/:id", get(customer::handlers::contractor_profile))
         .route("/jobs", post(customer::handlers::create_job))
+        .route("/jobs", get(customer::handlers::list_jobs))
         .route("/jobs/:id", get(customer::handlers::get_job))
         .route("/jobs/:id", delete(customer::handlers::cancel_job))
         .route("/jobs/:id/rating", post(customer::handlers::submit_rating))

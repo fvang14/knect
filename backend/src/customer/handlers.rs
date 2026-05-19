@@ -403,3 +403,54 @@ pub async fn submit_rating(
 
     Ok(StatusCode::OK)
 }
+
+// ─── Job List ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct CustomerJobListItem {
+    pub id: Uuid,
+    pub contractor_id: Uuid,
+    pub contractor_display_name: String,
+    pub status: crate::models::job::JobStatus,
+    pub description: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub has_rating: bool,
+}
+
+pub async fn list_jobs(
+    State(state): State<AppState>,
+    CustomerUser(claims): CustomerUser,
+) -> Result<Json<Vec<CustomerJobListItem>>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT
+               j.id, j.contractor_id,
+               cp.display_name AS contractor_display_name,
+               j.status AS "status: crate::models::job::JobStatus",
+               j.description, j.created_at,
+               EXISTS(
+                   SELECT 1 FROM ratings r WHERE r.job_id = j.id
+               ) AS "has_rating!: bool"
+           FROM jobs j
+           JOIN contractor_profiles cp ON cp.user_id = j.contractor_id
+           WHERE j.customer_id = $1
+           ORDER BY j.created_at DESC"#,
+        claims.sub
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| CustomerJobListItem {
+            id: r.id,
+            contractor_id: r.contractor_id,
+            contractor_display_name: r.contractor_display_name,
+            status: r.status,
+            description: r.description,
+            created_at: r.created_at,
+            has_rating: r.has_rating,
+        })
+        .collect();
+
+    Ok(Json(items))
+}

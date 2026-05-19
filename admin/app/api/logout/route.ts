@@ -1,10 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await getSession();
   session.destroy();
-  return NextResponse.redirect(
-    new URL("/login", process.env.NEXTAUTH_URL ?? "http://localhost:3001")
-  );
+  return NextResponse.redirect(new URL("/login", request.url));
 }

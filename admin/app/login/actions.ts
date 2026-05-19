@@ -19,8 +19,12 @@ export async function loginAction(formData: FormData) {
   }
 
   const data = await res.json();
+  const token = data.token;
+  if (!token || typeof token !== "string") {
+    redirect("/login?error=Login+failed");
+  }
   const session = await getSession();
-  session.jwt = data.token;
+  session.jwt = token;
   await session.save();
 
   redirect("/");

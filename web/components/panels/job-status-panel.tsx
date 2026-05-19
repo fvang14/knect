@@ -24,11 +24,7 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-gray-100 text-gray-500",
 };
 
-interface Props {
-  onClose: () => void;
-}
-
-export function JobStatusPanel({ onClose }: Props) {
+export function JobStatusPanel() {
   const { activeJob, setActiveJob } = useJob();
   const [jobDetail, setJobDetail] = useState<JobDetail | null>(null);
   const [cancelling, setCancelling] = useState(false);

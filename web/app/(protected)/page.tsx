@@ -30,7 +30,7 @@ export default function MapPage() {
       )}
 
       {activeJob && (
-        <JobStatusPanel onClose={() => {}} />
+        <JobStatusPanel />
       )}
     </div>
   );

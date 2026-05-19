@@ -15,7 +15,7 @@ export async function POST() {
   });
 
   if (!res.ok) {
-    session.destroy();
+    await session.destroy();
     return NextResponse.json({ error: "Refresh failed" }, { status: 401 });
   }
 

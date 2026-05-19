@@ -8,7 +8,7 @@ import {
   useReducer,
   useState,
 } from "react";
-import type { ActiveJob, NearbyContractor } from "@/lib/types";
+import type { ActiveJob } from "@/lib/types";
 import { applyWsEvent, WsState } from "@/lib/ws-reducer";
 import { useWebSocket } from "@/lib/ws-hook";
 import { setClientToken } from "@/lib/api-client";

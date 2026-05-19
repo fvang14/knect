@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE contractor_profiles\n           SET current_lat = $1,\n               current_lng = $2,\n               current_location = ST_MakePoint($2, $1)::geography,\n               location_updated_at = NOW()\n           WHERE user_id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Float8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1504e481137583316752dc3892dc448e322b3e5300d41c82e7dab949d9762d96"
+}

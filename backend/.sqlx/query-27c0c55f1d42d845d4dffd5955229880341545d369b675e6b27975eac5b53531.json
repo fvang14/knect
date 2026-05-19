@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               user_id, display_name, bio, base_rate,\n               base_rate_unit as \"base_rate_unit: RateUnit\",\n               is_busy, current_lat, current_lng,\n               avg_rating, rating_count,\n               ST_Distance(current_location, ST_MakePoint($1, $2)::geography) as distance_meters\n           FROM contractor_profiles\n           WHERE is_available = TRUE\n             AND is_busy = FALSE\n             AND current_location IS NOT NULL\n             AND ST_DWithin(current_location, ST_MakePoint($1, $2)::geography, $3)\n           ORDER BY distance_meters ASC\n           LIMIT 50",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "bio",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "base_rate",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "base_rate_unit: RateUnit",
+        "type_info": {
+          "Custom": {
+            "name": "rate_unit",
+            "kind": {
+              "Enum": [
+                "per_hour",
+                "per_job"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "is_busy",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "current_lat",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 7,
+        "name": "current_lng",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 8,
+        "name": "avg_rating",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 9,
+        "name": "rating_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "distance_meters",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "27c0c55f1d42d845d4dffd5955229880341545d369b675e6b27975eac5b53531"
+}

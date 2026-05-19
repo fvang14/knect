@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status as \"status: JobStatus\", contractor_id,\n                  cp.base_rate as contractor_base_rate\n           FROM jobs j\n           JOIN contractor_profiles cp ON cp.user_id = j.contractor_id\n           WHERE j.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status: JobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "accepted",
+                "denied",
+                "in_progress",
+                "completed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "contractor_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "contractor_base_rate",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "f47f7ac680a27bf92368a83896e42270234a0e9278c1a3fc2383737df20a7e7e"
+}

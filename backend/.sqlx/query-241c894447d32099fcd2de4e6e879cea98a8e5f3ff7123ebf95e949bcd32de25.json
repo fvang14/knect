@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT cp.user_id FROM contractor_profiles cp\n         JOIN users u ON u.id = cp.user_id\n         WHERE cp.user_id = $1 AND u.suspended_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "241c894447d32099fcd2de4e6e879cea98a8e5f3ff7123ebf95e949bcd32de25"
+}

@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT score, review_text, created_at\n         FROM ratings WHERE contractor_id = $1\n         ORDER BY created_at DESC LIMIT 20",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 1,
+        "name": "review_text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "08de6b715fcdb566d9f0756794a83dba9203b693474fe42914cc05e0182b3766"
+}

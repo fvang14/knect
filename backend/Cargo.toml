@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "macros"] }
 serde = { version = "1", features = ["derive"] }
@@ -20,7 +20,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
 anyhow = "1"
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+dashmap = "5"
+futures-util = "0.3"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+reqwest = { version = "0.12", features = ["json"] }

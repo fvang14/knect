@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE contractor_profiles SET\n            display_name = COALESCE($1, display_name),\n            bio = COALESCE($2, bio),\n            base_rate = COALESCE($3, base_rate),\n            base_rate_unit = COALESCE($4::rate_unit, base_rate_unit)\n           WHERE user_id = $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Float8",
+        {
+          "Custom": {
+            "name": "rate_unit",
+            "kind": {
+              "Enum": [
+                "per_hour",
+                "per_job"
+              ]
+            }
+          }
+        },
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "98fa8bc26cc063c4acc7ed8db597ee44eea963802f721f93f116b7f480b8d5c1"
+}

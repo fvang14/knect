@@ -1,0 +1,84 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, customer_id,\n                  status as \"status: crate::models::job::JobStatus\",\n                  description, location_lat, location_lng,\n                  location_address, created_at, updated_at\n           FROM jobs\n           WHERE contractor_id = $1\n             AND status IN ('pending', 'accepted', 'in_progress')\n           ORDER BY created_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "customer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "status: crate::models::job::JobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "accepted",
+                "denied",
+                "in_progress",
+                "completed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "location_lat",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 5,
+        "name": "location_lng",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "location_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "35d5d5ed2a46957b04be1c33afc7b75a3ad3e3932151c4cc7926ee16777dea9c"
+}

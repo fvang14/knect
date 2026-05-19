@@ -19,7 +19,7 @@ export async function loginAction(formData: FormData) {
   }
 
   const data = await res.json();
-  const token = data.token;
+  const token = data.access_token;
   if (!token || typeof token !== "string") {
     redirect("/login?error=Login+failed");
   }

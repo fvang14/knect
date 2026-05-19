@@ -56,8 +56,11 @@ export function useWebSocket(
     connect();
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      wsRef.current?.close();
-      wsRef.current = null;
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
   }, [connect]);
 }

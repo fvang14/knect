@@ -109,9 +109,11 @@ wss://api.knect.app/ws?token=<access_token>
 
 ### `MapView`
 - Client component wrapping Mapbox GL JS.
-- Renders contractor pins from `MapProvider`. Available contractors use a primary color pin; busy contractors use a muted "busy" pin.
-- On mount: calls `navigator.geolocation.getCurrentPosition()`. Coordinates are used to fetch `GET /contractors/nearby?lat=&lng=&radius=5000` and center the map. If geolocation is denied, falls back to default coordinates set via `NEXT_PUBLIC_DEFAULT_LAT` / `NEXT_PUBLIC_DEFAULT_LNG` env vars.
-- Clicking a contractor pin opens `ContractorPanel`.
+- Uses two data sources that serve different roles:
+  - **Position layer** (`MapProvider`, WebSocket) — live `{ contractor_id, lat, lng }` for all contractors with a cached Redis position. This is the source of truth for pin location.
+  - **Availability layer** (periodic fetch) — `GET /contractors/nearby` is called on mount and re-fetched every 30s. Returns only non-busy, available contractors with full profile data. The set of IDs returned by this call defines which pins are "available" (primary color, clickable) vs "busy" (muted, not clickable). Any WS position whose ID is absent from the nearby list is rendered as a busy pin.
+- On mount: calls `navigator.geolocation.getCurrentPosition()`. Coordinates center the map and seed the nearby query. If geolocation is denied, falls back to default coordinates set via `NEXT_PUBLIC_DEFAULT_LAT` / `NEXT_PUBLIC_DEFAULT_LNG` env vars.
+- Clicking an available (non-busy) contractor pin opens `ContractorPanel`.
 
 ### `ContractorPanel`
 - Slide-in drawer from the right.
@@ -139,7 +141,7 @@ wss://api.knect.app/ws?token=<access_token>
 ### `/jobs` page
 - Server component: reads session token, fetches `GET /jobs` (see Backend Change below).
 - Renders a list of jobs with: status badge, contractor name, job description, date.
-- Completed-unrated jobs show a "Leave a rating" link that deep-links to the map with the rating panel open.
+- Completed-unrated jobs show a "Leave a rating" link: `/?rate=<job_id>`. The map page reads the `rate` query param on mount; if present and the job is completed and unrated, it sets `activeJob` in `JobProvider` and renders `RatingPanel` immediately.
 
 ---
 

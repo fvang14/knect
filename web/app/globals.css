@@ -7,3 +7,12 @@ body {
   height: 100%;
   margin: 0;
 }
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rfPulse {
+  0%   { transform: translateX(-50%) scale(0.4); opacity: 0.5; }
+  100% { transform: translateX(-50%) scale(1.6); opacity: 0; }
+}

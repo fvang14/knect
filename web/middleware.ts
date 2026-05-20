@@ -11,13 +11,16 @@ export async function middleware(request: NextRequest) {
   );
 
   const { pathname } = request.nextUrl;
-  const isPublicPage = pathname === "/login" || pathname === "/register";
+  const isPublicPage =
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname === "/";
 
   if (!session.access_token && !isPublicPage) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  if (session.access_token && isPublicPage) {
+  if (session.access_token && (pathname === "/login" || pathname === "/register")) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

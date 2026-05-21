@@ -1,27 +1,45 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Clock, Check, Wrench } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useJob } from "@/components/providers/providers";
 import { api } from "@/lib/api-client";
 import { RatingPanel } from "./rating-panel";
 import type { JobDetail } from "@/lib/types";
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: "Waiting for contractor…",
-  accepted: "Contractor accepted!",
-  denied: "Request denied",
-  in_progress: "Job in progress",
-  completed: "Job completed",
-  cancelled: "Job cancelled",
-};
+interface SheetConfig {
+  Icon: LucideIcon;
+  tintBg: string;
+  tintFg: string;
+  title: string;
+}
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-yellow-100 text-yellow-800",
-  accepted: "bg-green-100 text-green-800",
-  denied: "bg-red-100 text-red-800",
-  in_progress: "bg-blue-100 text-blue-800",
-  completed: "bg-gray-100 text-gray-800",
-  cancelled: "bg-gray-100 text-gray-500",
+const SHEET_CONFIG: Record<string, SheetConfig> = {
+  pending: {
+    Icon: Clock,
+    tintBg: "#fef3c7",
+    tintFg: "#92400e",
+    title: "Waiting for contractor…",
+  },
+  accepted: {
+    Icon: Check,
+    tintBg: "#dcfce7",
+    tintFg: "#047857",
+    title: "On their way!",
+  },
+  in_progress: {
+    Icon: Wrench,
+    tintBg: "#eff6ff",
+    tintFg: "#1d4ed8",
+    title: "Job in progress",
+  },
+  completed: {
+    Icon: Check,
+    tintBg: "#f1f5f9",
+    tintFg: "#475569",
+    title: "Job complete",
+  },
 };
 
 export function JobStatusPanel() {
@@ -42,19 +60,6 @@ export function JobStatusPanel() {
   const status = activeJob.status;
   const isTerminal = ["denied", "cancelled"].includes(status);
 
-  const handleCancel = async () => {
-    if (!activeJob) return;
-    setCancelling(true);
-    try {
-      await api.cancelJob(activeJob.id);
-      setActiveJob(null);
-    } catch {
-      setCancelling(false);
-    }
-  };
-
-  const handleDismiss = () => setActiveJob(null);
-
   if (status === "completed" && !rated) {
     return (
       <RatingPanel
@@ -67,76 +72,118 @@ export function JobStatusPanel() {
     );
   }
 
+  if (isTerminal) {
+    return (
+      <aside
+        role="complementary"
+        className="fixed bottom-8 right-8 w-[380px] z-30 bg-white rounded-card-lg"
+        style={{ boxShadow: "0 18px 40px -16px rgba(15,23,42,0.22), 0 4px 12px -4px rgba(15,23,42,0.1)" }}
+      >
+        <div className="p-5">
+          <p className="text-sm text-slate-600 mb-4">
+            {status === "denied"
+              ? "The contractor is unavailable. You can request a different contractor."
+              : "Job cancelled — contractor went offline."}
+          </p>
+          <button
+            onClick={() => setActiveJob(null)}
+            className="w-full bg-slate-100 text-slate-700 py-2 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
+  const config = SHEET_CONFIG[status];
+  if (!config) return null;
+  const { Icon, tintBg, tintFg, title } = config;
+
+  const handleCancel = async () => {
+    if (!activeJob) return;
+    setCancelling(true);
+    try {
+      await api.cancelJob(activeJob.id);
+      setActiveJob(null);
+    } catch {
+      setCancelling(false);
+    }
+  };
+
   return (
-    <div className="fixed right-0 top-14 bottom-0 w-full max-w-sm bg-white shadow-xl z-30 overflow-y-auto">
-      <div className="p-4 space-y-4">
-        <h2 className="font-semibold text-lg">Job Status</h2>
-
+    <aside
+      role="complementary"
+      className="fixed bottom-8 right-8 w-[380px] z-30 bg-white rounded-card-lg overflow-hidden"
+      style={{ boxShadow: "0 18px 40px -16px rgba(15,23,42,0.22), 0 4px 12px -4px rgba(15,23,42,0.1)" }}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-3 px-5 py-4" style={{ background: tintBg }}>
         <span
-          className={`inline-block text-xs px-2 py-1 rounded-full font-medium ${
-            STATUS_COLORS[status] ?? "bg-gray-100 text-gray-700"
-          }`}
+          className="inline-flex items-center justify-center rounded-full w-9 h-9 flex-shrink-0"
+          style={{ background: tintBg, color: tintFg, border: `1.5px solid ${tintFg}20` }}
         >
-          {STATUS_LABELS[status] ?? status}
+          <Icon size={18} />
         </span>
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.06em]" style={{ color: tintFg }}>
+            {status.replace("_", " ")}
+          </div>
+          <div className="text-[15px] font-semibold text-slate-900 leading-tight">{title}</div>
+        </div>
+      </div>
 
-        {jobDetail?.quote && (
-          <div className="border rounded p-3 space-y-1 text-sm">
-            <p className="font-medium text-gray-700">Quote from contractor</p>
+      {/* Body */}
+      <div className="p-5 flex flex-col gap-3">
+        {status === "pending" && (
+          <>
+            <p className="text-sm text-slate-500">Typically responds within 60 seconds.</p>
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              className="w-full border border-red-300 text-red-600 py-2 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50 transition-colors"
+            >
+              {cancelling ? "Cancelling…" : "Cancel Request"}
+            </button>
+          </>
+        )}
+
+        {status === "accepted" && (
+          <>
+            <p className="text-sm text-slate-500">Your pro is on the way.</p>
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              className="w-full border border-warm-border text-slate-600 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-50 transition-colors"
+            >
+              {cancelling ? "Cancelling…" : "Cancel Request"}
+            </button>
+          </>
+        )}
+
+        {status === "in_progress" && jobDetail?.quote && (
+          <div className="border border-warm-border rounded-[10px] p-3 text-sm bg-warm-muted">
+            <p className="font-medium text-slate-700 mb-1">Quote from contractor</p>
             {jobDetail.quote.custom_amount != null ? (
               <p>
-                <span className="font-semibold">
+                <span className="font-semibold text-slate-900 tabular-nums">
                   ${jobDetail.quote.custom_amount}
                 </span>
                 {jobDetail.quote.custom_note && (
-                  <span className="text-gray-500 ml-1">
-                    — {jobDetail.quote.custom_note}
-                  </span>
+                  <span className="text-slate-500 ml-1">— {jobDetail.quote.custom_note}</span>
                 )}
               </p>
             ) : jobDetail.quote.base_rate_snapshot != null ? (
               <p>
                 Base rate:{" "}
-                <span className="font-semibold">
+                <span className="font-semibold text-slate-900 tabular-nums">
                   ${jobDetail.quote.base_rate_snapshot}
                 </span>
               </p>
             ) : null}
           </div>
         )}
-
-        {status === "denied" && (
-          <p className="text-sm text-gray-600">
-            The contractor is unavailable. You can request a different contractor.
-          </p>
-        )}
-
-        {status === "cancelled" && (
-          <p className="text-sm text-gray-600">
-            Job cancelled — contractor went offline.
-          </p>
-        )}
-
-        <div className="pt-2 flex gap-2">
-          {status === "pending" && (
-            <button
-              onClick={handleCancel}
-              disabled={cancelling}
-              className="flex-1 border border-red-300 text-red-600 py-2 rounded text-sm font-medium hover:bg-red-50 disabled:opacity-50 transition-colors"
-            >
-              {cancelling ? "Cancelling…" : "Cancel Request"}
-            </button>
-          )}
-          {isTerminal && (
-            <button
-              onClick={handleDismiss}
-              className="flex-1 bg-gray-100 text-gray-700 py-2 rounded text-sm font-medium hover:bg-gray-200 transition-colors"
-            >
-              Dismiss
-            </button>
-          )}
-        </div>
       </div>
-    </div>
+    </aside>
   );
 }

@@ -62,7 +62,7 @@ export function SignedInDirectory({ initialContractors }: SignedInDirectoryProps
         <aside className="w-[380px] flex-shrink-0 flex flex-col gap-3">
           <div className="relative flex-1 min-h-[360px] bg-white border border-warm-border rounded-card overflow-hidden">
             <MapView
-              onContractorClick={(id) => {
+              onContractorClick={(_id) => {
                 // Navigation handled by capsule pins via router.push in MapView
               }}
               onUserLocationChange={setUserLocation}

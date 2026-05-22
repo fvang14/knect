@@ -32,3 +32,70 @@ async fn get_me_requires_auth(pool: PgPool) {
     let (status, _) = common::get_json(&app, "/me", None).await;
     assert_eq!(status, 401);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn patch_me_updates_display_name(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "p1@example.com", "customer", "Pat One").await;
+
+    let (status, _) = common::patch_json(
+        &app,
+        "/me",
+        &token,
+        serde_json::json!({ "display_name": "Patricia One" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/me", Some(&token)).await;
+    assert_eq!(body["display_name"], "Patricia One");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn patch_me_updates_email(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "old@example.com", "customer", "User").await;
+
+    let (status, _) = common::patch_json(
+        &app,
+        "/me",
+        &token,
+        serde_json::json!({ "email": "new@example.com" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, body) = common::get_json(&app, "/me", Some(&token)).await;
+    assert_eq!(body["email"], "new@example.com");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn patch_me_email_conflict_returns_409(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    common::register_and_login(&app, "taken@example.com", "customer", "Taken").await;
+    let token = common::register_and_login(&app, "u@example.com", "customer", "User").await;
+
+    let (status, _) = common::patch_json(
+        &app,
+        "/me",
+        &token,
+        serde_json::json!({ "email": "taken@example.com" }),
+    )
+    .await;
+    assert_eq!(status, 409);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn patch_me_rejects_empty_display_name(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "e@example.com", "customer", "User").await;
+
+    let (status, _) = common::patch_json(
+        &app,
+        "/me",
+        &token,
+        serde_json::json!({ "display_name": "" }),
+    )
+    .await;
+    assert_eq!(status, 400);
+}

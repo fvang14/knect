@@ -211,3 +211,28 @@ pub async fn register_and_login(
         .unwrap_or_else(|| panic!("register_and_login failed for {email}: {body}"))
         .to_string()
 }
+
+pub async fn patch_json(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}

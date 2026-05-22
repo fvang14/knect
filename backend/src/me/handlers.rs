@@ -64,3 +64,68 @@ pub async fn get_me(
         avatar_updated_at: avatar.map(|a| a.updated_at),
     }))
 }
+
+#[derive(Deserialize)]
+pub struct PatchMeRequest {
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+}
+
+pub async fn patch_me(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Json(req): Json<PatchMeRequest>,
+) -> Result<StatusCode, AppError> {
+    if let Some(ref name) = req.display_name {
+        if name.trim().is_empty() || name.len() > 80 {
+            return Err(AppError::BadRequest("Invalid display name".to_string()));
+        }
+    }
+
+    let mut tx = state.db.begin().await?;
+
+    if let Some(ref email) = req.email {
+        let exists = sqlx::query_scalar!(
+            "SELECT id FROM users WHERE email = $1 AND id <> $2",
+            email,
+            claims.sub
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if exists.is_some() {
+            return Err(AppError::Conflict("Email already registered".to_string()));
+        }
+        sqlx::query!("UPDATE users SET email = $1 WHERE id = $2", email, claims.sub)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    if let Some(ref name) = req.display_name {
+        match claims.role {
+            UserRole::Customer => {
+                sqlx::query!(
+                    "UPDATE customer_profiles SET display_name = $1 WHERE user_id = $2",
+                    name,
+                    claims.sub
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+            UserRole::Contractor => {
+                sqlx::query!(
+                    "UPDATE contractor_profiles SET display_name = $1 WHERE user_id = $2",
+                    name,
+                    claims.sub
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+            UserRole::Admin => {
+                return Err(AppError::Unauthorized("Admin cannot use /me".to_string()))
+            }
+        }
+    }
+
+    tx.commit().await?;
+    Ok(StatusCode::OK)
+}

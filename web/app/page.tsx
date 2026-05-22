@@ -12,11 +12,13 @@ export default async function HomePage() {
   const isLoggedIn =
     !!session.access_token && !isTokenExpired(session.access_token);
 
-  const contractors = await serverApi.nearbyContractors(DEFAULT_LAT, DEFAULT_LNG);
+  const contractors = isLoggedIn
+    ? await serverApi.nearbyContractors(DEFAULT_LAT, DEFAULT_LNG)
+    : [];
 
   return (
     <>
-      <Navbar isLoggedIn={isLoggedIn} />
+      <Navbar />
       <div className="pt-[60px] h-full flex flex-col">
         {isLoggedIn ? (
           <SignedInDirectory initialContractors={contractors} />

@@ -8,7 +8,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 let _token: string | null = null;
 
-export function setClientToken(token: string) {
+export function setClientToken(token: string | null) {
   _token = token;
   if (typeof window !== "undefined" && typeof CustomEvent !== "undefined") {
     window.dispatchEvent(new CustomEvent("knect-token-changed", { detail: token }));

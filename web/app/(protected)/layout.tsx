@@ -8,7 +8,7 @@ export default function ProtectedLayout({
 }) {
   return (
     <>
-      <Navbar isLoggedIn={true} />
+      <Navbar />
       <div className="pt-[60px] h-full">
         <Suspense>{children}</Suspense>
       </div>

@@ -11,9 +11,28 @@ interface AvatarProps {
   name: string;
   size?: number;
   palette?: "blue" | "green" | "amber" | "rose" | "mint" | "violet";
+  src?: string | null;
 }
 
-export function Avatar({ name, size = 36, palette = "blue" }: AvatarProps) {
+export function Avatar({ name, size = 36, palette = "blue", src }: AvatarProps) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        width={size}
+        height={size}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "9999px",
+          objectFit: "cover",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+
   const initials = name
     .split(/\s+/)
     .slice(0, 2)

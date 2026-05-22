@@ -8,10 +8,12 @@ import {
   useReducer,
   useState,
 } from "react";
+import { usePathname } from "next/navigation";
 import type { ActiveJob } from "@/lib/types";
 import { applyWsEvent, WsState } from "@/lib/ws-reducer";
 import { useWebSocket } from "@/lib/ws-hook";
-import { setClientToken } from "@/lib/api-client";
+import { setClientToken, apiFetch } from "@/lib/api-client";
+import { MeUser } from "@/lib/me";
 
 // ─── Contexts ────────────────────────────────────────────────────────────────
 
@@ -30,6 +32,10 @@ interface JobCtxValue {
 interface WsCtxValue {
   connected: boolean;
 }
+interface MeUserCtxValue {
+  meUser: MeUser | null;
+  setMeUser: React.Dispatch<React.SetStateAction<MeUser | null>>;
+}
 
 const AuthCtx = createContext<AuthCtxValue>({ token: null });
 const MapCtx = createContext<MapCtxValue>({
@@ -42,34 +48,85 @@ const JobCtx = createContext<JobCtxValue>({
   setActiveJob: () => {},
 });
 const WsCtx = createContext<WsCtxValue>({ connected: false });
+const MeUserCtx = createContext<MeUserCtxValue>({
+  meUser: null,
+  setMeUser: () => {},
+});
 
 export const useAuth = () => useContext(AuthCtx);
 export const useMapContractors = () => useContext(MapCtx);
 export const useJob = () => useContext(JobCtx);
 export const useWsStatus = () => useContext(WsCtx);
+export const useMeUser = () => useContext(MeUserCtx);
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 
 const INITIAL_STATE: WsState = { contractors: new Map(), activeJob: null };
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  initialMeUser,
+}: {
+  children: React.ReactNode;
+  initialMeUser: MeUser | null;
+}) {
   const [token, setToken] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [state, dispatch] = useReducer(applyWsEvent, INITIAL_STATE);
   const [availableIds, setAvailableIds] = useState<Set<string>>(new Set());
+  const [meUser, setMeUser] = useState<MeUser | null>(initialMeUser);
+  const [hasCheckedSession, setHasCheckedSession] = useState(false);
+  const pathname = usePathname();
 
-  // Hydrate token on mount
+  console.log("Providers: pathname =", pathname, "token =", token, "meUser =", meUser ? meUser.email : null, "initialMeUser =", initialMeUser ? initialMeUser.email : null);
+
+  // Hydrate token on mount or on route navigation
   useEffect(() => {
+    console.log("Providers [useEffect pathname]: fetching /api/session");
     fetch("/api/session")
-      .then((r) => r.json())
+      .then((r) => {
+        console.log("Providers [useEffect pathname]: /api/session status =", r.status);
+        return r.json();
+      })
       .then((d) => {
+        console.log("Providers [useEffect pathname]: /api/session returned access_token =", d.access_token ? "exists" : "null");
         if (d.access_token) {
           setToken(d.access_token);
           setClientToken(d.access_token);
+        } else {
+          setToken(null);
+          setClientToken(null);
         }
       })
-      .catch(() => {});
-  }, []);
+      .catch((err) => {
+        console.error("Providers [useEffect pathname]: /api/session fetch failed:", err);
+        setToken(null);
+        setClientToken(null);
+      })
+      .finally(() => {
+        setHasCheckedSession(true);
+      });
+  }, [pathname]);
+
+  // Sync meUser when token changes client-side
+  useEffect(() => {
+    console.log("Providers [useEffect token]: token =", token ? "exists" : "null", "hasCheckedSession =", hasCheckedSession);
+    if (token) {
+      console.log("Providers [useEffect token]: calling apiFetch(/me)");
+      apiFetch<MeUser>("/me")
+        .then((user) => {
+          console.log("Providers [useEffect token]: apiFetch(/me) returned user =", user.email);
+          setMeUser(user);
+        })
+        .catch((err) => {
+          console.error("Providers [useEffect token]: apiFetch(/me) failed:", err);
+          setMeUser(null);
+        });
+    } else if (hasCheckedSession) {
+      console.log("Providers [useEffect token]: setting meUser to null");
+      setMeUser(null);
+    }
+  }, [token, hasCheckedSession]);
 
   // Sync token from API client updates (e.g., after silent refresh)
   useEffect(() => {
@@ -108,7 +165,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       >
         <JobCtx.Provider value={{ activeJob: state.activeJob, setActiveJob }}>
           <WsCtx.Provider value={{ connected: wsConnected }}>
-            {children}
+            <MeUserCtx.Provider value={{ meUser, setMeUser }}>
+              {children}
+            </MeUserCtx.Provider>
           </WsCtx.Provider>
         </JobCtx.Provider>
       </MapCtx.Provider>

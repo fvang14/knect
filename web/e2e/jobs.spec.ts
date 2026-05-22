@@ -17,12 +17,12 @@ test.describe("Job history page", () => {
   test("navigates to /jobs and shows job list or empty state", async ({
     page,
   }) => {
-    await page.click("text=My Jobs");
+    await page.click("text=My jobs");
     await page.waitForURL("/jobs");
-    await expect(page.locator("h1")).toContainText("My Jobs");
+    await expect(page.locator("h1")).toContainText("My jobs");
     // Either a list or empty state is rendered
     const hasJobs = await page.locator("li").count();
-    const hasEmpty = await page.locator("text=No jobs yet").count();
+    const hasEmpty = await page.locator("text=No jobs in this category.").count();
     expect(hasJobs + hasEmpty).toBeGreaterThan(0);
   });
 });

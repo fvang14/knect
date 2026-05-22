@@ -236,3 +236,69 @@ pub async fn patch_json(
     let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
+
+pub async fn post_multipart(
+    app: &axum::Router,
+    path: &str,
+    bearer_token: &str,
+    content_type: &str,
+    filename: &str,
+    bytes: &[u8],
+) -> (StatusCode, serde_json::Value) {
+    let boundary = "----testboundary";
+    let mut body: Vec<u8> = Vec::new();
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("authorization", format!("Bearer {bearer_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+pub async fn get_bytes(
+    app: &axum::Router,
+    path: &str,
+) -> (StatusCode, std::collections::HashMap<String, String>, String, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(Request::builder().method("GET").uri(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let mut headers = std::collections::HashMap::new();
+    let mut ct = String::new();
+    for (k, v) in response.headers().iter() {
+        let v = v.to_str().unwrap_or("").to_string();
+        if k.as_str() == "content-type" {
+            ct = v.clone();
+        }
+        headers.insert(k.as_str().to_string(), v);
+    }
+    let bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, headers, ct, bytes)
+}

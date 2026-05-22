@@ -34,8 +34,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/login", post(auth::handlers::login))
         .route("/auth/refresh", post(auth::handlers::refresh))
         .route("/auth/me", get(auth::handlers::me))
-        .route("/me", get(me::handlers::get_me).patch(me::handlers::patch_me))
+        .route("/me", get(me::handlers::get_me).patch(me::handlers::patch_me).delete(me::handlers::delete_me))
         .route("/me/password", post(me::handlers::post_password))
+        .route(
+            "/me/avatar",
+            post(me::handlers::post_avatar)
+                .delete(me::handlers::delete_avatar)
+                .layer(axum::extract::DefaultBodyLimit::max(3 * 1024 * 1024)),
+        )
+        .route("/users/:id/avatar", get(me::handlers::get_user_avatar))
         // Contractor
         .route("/contractor/profile", get(contractor::handlers::get_profile))
         .route("/contractor/profile", put(contractor::handlers::update_profile))

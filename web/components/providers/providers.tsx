@@ -78,18 +78,13 @@ export function Providers({
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
   const pathname = usePathname();
 
-  console.log("Providers: pathname =", pathname, "token =", token, "meUser =", meUser ? meUser.email : null, "initialMeUser =", initialMeUser ? initialMeUser.email : null);
-
   // Hydrate token on mount or on route navigation
   useEffect(() => {
-    console.log("Providers [useEffect pathname]: fetching /api/session");
     fetch("/api/session")
       .then((r) => {
-        console.log("Providers [useEffect pathname]: /api/session status =", r.status);
         return r.json();
       })
       .then((d) => {
-        console.log("Providers [useEffect pathname]: /api/session returned access_token =", d.access_token ? "exists" : "null");
         if (d.access_token) {
           setToken(d.access_token);
           setClientToken(d.access_token);
@@ -110,12 +105,9 @@ export function Providers({
 
   // Sync meUser when token changes client-side
   useEffect(() => {
-    console.log("Providers [useEffect token]: token =", token ? "exists" : "null", "hasCheckedSession =", hasCheckedSession);
     if (token) {
-      console.log("Providers [useEffect token]: calling apiFetch(/me)");
       apiFetch<MeUser>("/me")
         .then((user) => {
-          console.log("Providers [useEffect token]: apiFetch(/me) returned user =", user.email);
           setMeUser(user);
         })
         .catch((err) => {
@@ -123,7 +115,6 @@ export function Providers({
           setMeUser(null);
         });
     } else if (hasCheckedSession) {
-      console.log("Providers [useEffect token]: setting meUser to null");
       setMeUser(null);
     }
   }, [token, hasCheckedSession]);

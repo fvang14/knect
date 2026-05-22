@@ -4,6 +4,7 @@ pub mod config;
 pub mod contractor;
 pub mod customer;
 pub mod error;
+pub mod me;
 pub mod models;
 pub mod ws;
 
@@ -33,6 +34,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/login", post(auth::handlers::login))
         .route("/auth/refresh", post(auth::handlers::refresh))
         .route("/auth/me", get(auth::handlers::me))
+        .route("/me", get(me::handlers::get_me))
         // Contractor
         .route("/contractor/profile", get(contractor::handlers::get_profile))
         .route("/contractor/profile", put(contractor::handlers::update_profile))

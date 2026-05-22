@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { useMapContractors } from "@/components/providers/providers";
+import { useMapContractors, useAuth } from "@/components/providers/providers";
 import { api } from "@/lib/api-client";
 import type { NearbyContractor } from "@/lib/types";
 
@@ -77,6 +77,7 @@ export function MapView({ onContractorClick, onUserLocationChange }: Props) {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const userMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const { token } = useAuth();
   const { contractors, availableIds, setAvailableIds } = useMapContractors();
   const [locationBanner, setLocationBanner] = useState(false);
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
@@ -117,14 +118,14 @@ export function MapView({ onContractorClick, onUserLocationChange }: Props) {
   }, []);
 
   const fetchNearby = useCallback(async () => {
-    if (!userPos) return;
+    if (!userPos || !token) return;
     try {
       const nearby = await api.nearbyContractors(userPos.lat, userPos.lng);
       setAvailableIds(new Set(nearby.map((c: NearbyContractor) => c.user_id)));
     } catch {
       // keep previous
     }
-  }, [userPos, setAvailableIds]);
+  }, [userPos, token, setAvailableIds]);
 
   useEffect(() => {
     fetchNearby();

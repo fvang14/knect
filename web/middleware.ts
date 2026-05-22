@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
-import { SessionData, sessionOptions } from "@/lib/session";
+import { SessionData, sessionOptions, isTokenExpired } from "@/lib/session";
 
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next();
@@ -16,11 +16,14 @@ export async function middleware(request: NextRequest) {
     pathname === "/register" ||
     pathname === "/";
 
-  if (!session.access_token && !isPublicPage) {
+  const hasValidToken =
+    !!session.access_token && !isTokenExpired(session.access_token);
+
+  if (!hasValidToken && !isPublicPage) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  if (session.access_token && (pathname === "/login" || pathname === "/register")) {
+  if (hasValidToken && (pathname === "/login" || pathname === "/register")) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

@@ -35,6 +35,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/refresh", post(auth::handlers::refresh))
         .route("/auth/me", get(auth::handlers::me))
         .route("/me", get(me::handlers::get_me).patch(me::handlers::patch_me))
+        .route("/me/password", post(me::handlers::post_password))
         // Contractor
         .route("/contractor/profile", get(contractor::handlers::get_profile))
         .route("/contractor/profile", put(contractor::handlers::update_profile))

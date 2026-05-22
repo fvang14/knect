@@ -129,3 +129,41 @@ pub async fn patch_me(
     tx.commit().await?;
     Ok(StatusCode::OK)
 }
+
+#[derive(Deserialize)]
+pub struct PasswordChangeRequest {
+    pub current: String,
+    pub new: String,
+}
+
+pub async fn post_password(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    Json(req): Json<PasswordChangeRequest>,
+) -> Result<StatusCode, AppError> {
+    if req.new.len() < 8 {
+        return Err(AppError::BadRequest("Password too short".to_string()));
+    }
+
+    let row = sqlx::query!(
+        "SELECT password_hash FROM users WHERE id = $1",
+        claims.sub
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    if !verify_password(&req.current, &row.password_hash)? {
+        return Err(AppError::Unauthorized("Current password incorrect".to_string()));
+    }
+
+    let new_hash = hash_password(&req.new)?;
+    sqlx::query!(
+        "UPDATE users SET password_hash = $1 WHERE id = $2",
+        new_hash,
+        claims.sub
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::OK)
+}

@@ -99,3 +99,42 @@ async fn patch_me_rejects_empty_display_name(pool: PgPool) {
     .await;
     assert_eq!(status, 400);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn post_password_changes_password(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "pw@example.com", "customer", "User").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        "/me/password",
+        &token,
+        serde_json::json!({ "current": "password123", "new": "newpassword456" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    // Re-login with new password
+    let (login_status, _) = common::post_json(
+        &app,
+        "/auth/login",
+        serde_json::json!({ "email": "pw@example.com", "password": "newpassword456" }),
+    )
+    .await;
+    assert_eq!(login_status, 200);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn post_password_wrong_current_returns_401(pool: PgPool) {
+    let app = common::test_app(pool).await;
+    let token = common::register_and_login(&app, "pw2@example.com", "customer", "User").await;
+
+    let (status, _) = common::post_json_auth(
+        &app,
+        "/me/password",
+        &token,
+        serde_json::json!({ "current": "wrong", "new": "newpassword456" }),
+    )
+    .await;
+    assert_eq!(status, 401);
+}

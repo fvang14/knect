@@ -10,6 +10,9 @@ let _token: string | null = null;
 
 export function setClientToken(token: string) {
   _token = token;
+  if (typeof window !== "undefined" && typeof CustomEvent !== "undefined") {
+    window.dispatchEvent(new CustomEvent("knect-token-changed", { detail: token }));
+  }
 }
 
 async function doFetch(
@@ -46,7 +49,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       throw new Error("Session expired");
     }
     const { access_token } = await refreshRes.json();
-    _token = access_token;
+    setClientToken(access_token);
     res = await doFetch(path, access_token, init);
   }
 

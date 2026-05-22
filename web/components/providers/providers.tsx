@@ -71,6 +71,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
+  // Sync token from API client updates (e.g., after silent refresh)
+  useEffect(() => {
+    const handleTokenChange = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      setToken(customEvent.detail);
+    };
+
+    window.addEventListener("knect-token-changed", handleTokenChange);
+    return () => {
+      window.removeEventListener("knect-token-changed", handleTokenChange);
+    };
+  }, []);
+
   const handleMessage = useCallback(
     (event: Parameters<typeof applyWsEvent>[1]) => {
       dispatch(event);

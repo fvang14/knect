@@ -60,3 +60,14 @@ test("redirects to /login if refresh fails", async () => {
   await expect(apiFetch("/protected")).rejects.toThrow("Session expired");
   expect(window.location.href).toBe("/login");
 });
+
+test("dispatches knect-token-changed event when token is set", () => {
+  const listener = jest.fn();
+  window.addEventListener("knect-token-changed", listener);
+
+  setClientToken("event-test-token");
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect((listener.mock.calls[0][0] as CustomEvent).detail).toBe("event-test-token");
+
+  window.removeEventListener("knect-token-changed", listener);
+});

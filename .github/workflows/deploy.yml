@@ -28,14 +28,9 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Add Server to Known Hosts
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
-
       - name: Execute deployment commands via SSH
         run: |
-          ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
             cd ~/Projects/knect
             git pull
             ~/.local/bin/docker-compose --env-file backend/.env -f backend/docker-compose.prod.yml up --build -d

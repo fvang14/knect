@@ -14,7 +14,7 @@ use axum::{
     Router,
 };
 use sqlx::PgPool;
-use tower_http::trace::TraceLayer;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::config::Config;
 
@@ -57,6 +57,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/metrics", get(admin::handlers::get_metrics))
         // WebSocket
         .route("/ws", get(ws::handler::ws_handler))
+        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

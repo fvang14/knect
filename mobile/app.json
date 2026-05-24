@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Knect Contractor",
+    "slug": "knect-contractor",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": { "bundleIdentifier": "app.knect.contractor", "supportsTablet": false },
+    "android": { "package": "app.knect.contractor", "adaptiveIcon": { "backgroundColor": "#ffffff" } },
+    "plugins": [
+      ["expo-location", { "locationWhenInUsePermission": "Knect needs your location to share it with customers." }]
+    ]
+  }
+}
